@@ -837,6 +837,22 @@ static struct fbtft_device_display displays[] = {
 			}
 		}
 	}, {
+		.name = "p220md-t",
+		.spi = &(struct spi_board_info) {
+			.modalias = "fb_ili9488",
+			.max_speed_hz = 40000000,
+			.mode = SPI_MODE_0,
+			.platform_data = &(struct fbtft_platform_data) {
+				.display = {
+					.buswidth = 8,
+					.backlight = 1,
+				},
+				.gpios = (const struct fbtft_gpio []) {
+					{},
+				},
+			}
+		}
+	}, {
 		.name = "piscreen",
 		.spi = &(struct spi_board_info) {
 			.modalias = "fb_ili9486",

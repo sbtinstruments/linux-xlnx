@@ -172,6 +172,63 @@ int fbtft_write_vmem16_bus8(struct fbtft_par *par, size_t offset, size_t len)
 }
 EXPORT_SYMBOL(fbtft_write_vmem16_bus8);
 
+/* 16bpp converted to 18bpp stored in 24-bit over 8-bit databus
+ * Reference: https://github.com/notro/fbtft/issues/490 */
+int fbtft_write_vmem16_bus8_patched(struct fbtft_par *par, size_t offset, size_t len)
+{
+	u16 *vmem16;
+	u8 *txbuf = par->txbuf.buf;
+	size_t remain;
+	size_t to_copy;
+	size_t tx_array_size;
+	int i;
+	int ret = 0;
+
+	fbtft_par_dbg(DEBUG_WRITE_VMEM, par, "%s(offset=%zu, len=%zu)\n",
+		__func__, offset, len);
+
+	/* remaining number of pixels to send */
+	remain = len / 2;
+	vmem16 = (u16 *)(par->info->screen_buffer + offset);
+
+	if (par->gpio.dc != -1)
+		gpio_set_value(par->gpio.dc, 1);
+
+	/* number of pixels that fits in the transmit buffer */
+	tx_array_size = par->txbuf.len / 3;
+
+	while (remain) {
+		/* number of pixels to copy in one iteration of the loop */
+		to_copy = min(tx_array_size, remain);
+		dev_dbg(par->info->device, "    to_copy=%zu, remain=%zu\n",
+						to_copy, remain - to_copy);
+
+		for (i = 0; i < to_copy; i++) {
+			u16 pixel = vmem16[i];
+			u16 b = pixel & 0x1f;
+			u16 g = (pixel & (0x3f << 5)) >> 5;
+			u16 r = (pixel & (0x1f << 11)) >> 11;
+
+			u8 r8 = (r & 0x1F) << 3;
+			u8 g8 = (g & 0x3F) << 2;
+			u8 b8 = (b & 0x1F) << 3;
+
+			txbuf[i * 3 + 0] = r8;
+			txbuf[i * 3 + 1] = g8;
+			txbuf[i * 3 + 2] = b8;
+		}
+
+		vmem16 = vmem16 + to_copy;
+		ret = par->fbtftops.write(par, par->txbuf.buf, to_copy * 3);
+		if (ret < 0)
+			return ret;
+		remain -= to_copy;
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL(fbtft_write_vmem16_bus8_patched);
+
 /* 16 bit pixel over 9-bit SPI bus: dc + high byte, dc + low byte */
 int fbtft_write_vmem16_bus9(struct fbtft_par *par, size_t offset, size_t len)
 {

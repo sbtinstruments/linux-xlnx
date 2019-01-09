@@ -1375,7 +1375,9 @@ int fbtft_probe_common(struct fbtft_display *display,
 
 	/* write_vmem() functions */
 	if (display->buswidth == 8)
-		par->fbtftops.write_vmem = fbtft_write_vmem16_bus8;
+		/* Reference: https://github.com/notro/fbtft/issues/490 */
+		par->fbtftops.write_vmem = fbtft_write_vmem16_bus8_patched;
+		/* par->fbtftops.write_vmem = fbtft_write_vmem16_bus8; */
 	else if (display->buswidth == 9)
 		par->fbtftops.write_vmem = fbtft_write_vmem16_bus9;
 	else if (display->buswidth == 16)
