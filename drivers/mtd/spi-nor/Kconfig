@@ -39,6 +39,22 @@ config SPI_ASPEED_SMC
 	  and support for the SPI flash memory controller (SPI) for
 	  the host firmware. The implementation only supports SPI NOR.
 
+config MTD_SPI_NOR_JEDEC_ID_CHECK
+	bool "Use JEDEC ID to identify the flash controller"
+	default y
+	help
+	  The flash controller itself contains a JEDEC ID that can be used
+	  to infer information about the controller. Alternatively, the user
+	  can provide a name that the driver will match against a list of known
+	  flash controllers.
+
+	  If given a name, the driver will verify that the name corresponds to
+	  the JEDEC ID read from the flash controller. This is generally a good
+	  practice. If the flash controller is not physically connected at this
+	  point, however, then the check will fail. Disable this check to allow
+	  the flash controller to be added even if it is not yet physically
+	  connected to the system.
+
 config SPI_ATMEL_QUADSPI
 	tristate "Atmel Quad SPI Controller"
 	depends on ARCH_AT91 || (ARM && COMPILE_TEST)
