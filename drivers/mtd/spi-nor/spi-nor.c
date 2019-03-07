@@ -5487,6 +5487,7 @@ static struct flash_info *spi_nor_get_flash_info(struct spi_nor *nor,
 	if (IS_ERR_OR_NULL(info))
 		return ERR_PTR(-ENOENT);
 
+#ifdef CONFIG_MTD_SPI_NOR_JEDEC_ID_CHECK
 	/*
 	 * If caller has specified name of flash model that can normally be
 	 * detected using JEDEC, let's verify it.
@@ -5510,6 +5511,7 @@ static struct flash_info *spi_nor_get_flash_info(struct spi_nor *nor,
 			info = jinfo;
 		}
 	}
+#endif
 
 	return (struct flash_info *)info;
 }
