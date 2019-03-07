@@ -3669,6 +3669,8 @@ static const struct flash_info *spi_nor_get_flash_info(struct spi_nor *nor,
 	if (!info)
 		return spi_nor_detect(nor);
 
+#ifdef CONFIG_MTD_SPI_NOR_JEDEC_ID_CHECK
+
 	/*
 	 * If caller has specified name of flash model that can normally be
 	 * detected using JEDEC, let's verify it.
@@ -3692,6 +3694,8 @@ static const struct flash_info *spi_nor_get_flash_info(struct spi_nor *nor,
 			info = jinfo;
 		}
 	}
+
+#endif
 
 	return info;
 }

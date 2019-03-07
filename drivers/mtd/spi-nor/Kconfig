@@ -24,6 +24,22 @@ config MTD_SPI_NOR_USE_4K_SECTORS
 	  Please note that some tools/drivers/filesystems may not work with
 	  4096 B erase size (e.g. UBIFS requires 15 KiB as a minimum).
 
+config MTD_SPI_NOR_JEDEC_ID_CHECK
+	bool "Use JEDEC ID to identify the flash controller"
+	default y
+	help
+	  The flash controller itself contains a JEDEC ID that can be used
+	  to infer information about the controller. Alternatively, the user
+	  can provide a name that the driver will match against a list of known
+	  flash controllers.
+
+	  If given a name, the driver will verify that the name corresponds to
+	  the JEDEC ID read from the flash controller. This is generally a good
+	  practice. If the flash controller is not physically connected at this
+	  point, however, then the check will fail. Disable this check to allow
+	  the flash controller to be added even if it is not yet physically
+	  connected to the system.
+
 choice
 	prompt "Software write protection at boot"
 	default MTD_SPI_NOR_SWP_DISABLE_ON_VOLATILE
