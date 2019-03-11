@@ -417,7 +417,6 @@ static int read_sr(struct spi_nor *nor)
 	}
 
 	if (ret < 0) {
-		pr_err("error %d reading SR\n", (int) ret);
 		return ret;
 	}
 	if (nor->isparallel)
