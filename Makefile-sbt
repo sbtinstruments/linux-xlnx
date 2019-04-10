@@ -7,15 +7,17 @@ makecmd=CROSS_COMPILE=$(CROSS_COMPILE) $(MAKE) -j $(processors) \
 	ARCH=arm CFLAGS=$(cflags)
 
 .PHONY: arch/arm/boot/uImage
-arch/arm/boot/uImage:
-	$(makecmd) ARCH=arm green_mango_defconfig
+arch/arm/boot/uImage: .config
 	PATH=$(PATH):$(uboot_tools) $(makecmd) UIMAGE_LOADADDR=0x8000 uImage
 
 modules = drivers/staging/fbtft/fbtft_device.ko \
           drivers/staging/fbtft/flexfb.ko
 .PHONY: $(modules)
-$(modules):
+$(modules): .config
 	$(makecmd) modules
+
+.config: arch/arm/configs/green_mango_defconfig
+	$(makecmd) ARCH=arm green_mango_defconfig
 
 .PHONY: install-remote
 install-remote: remote_host_defined arch/arm/boot/uImage
