@@ -169,6 +169,7 @@ int da9063_device_init(struct da9063 *da9063, unsigned int irq)
 	da9063->flags = 0;
 	da9063->irq_base = -1;
 	da9063->chip_irq = irq;
+	enable_irq_wake(da9063->chip_irq);
 
 	ret = da9063_irq_init(da9063);
 	if (ret) {
