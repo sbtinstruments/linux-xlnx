@@ -170,6 +170,7 @@ int da9063_device_init(struct da9063 *da9063, unsigned int irq)
 	da9063->flags = 0;
 	da9063->irq_base = -1;
 	da9063->chip_irq = irq;
+	enable_irq_wake(da9063->chip_irq);
 
 	ret = regmap_read(da9063->regmap, DA9063_REG_CHIP_ID, &model);
 	if (ret < 0) {
