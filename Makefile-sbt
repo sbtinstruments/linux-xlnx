@@ -1,5 +1,5 @@
 # Cross-compilation
-uboot_tools=/projects/u-boot-xlnx/tools
+uboot_tools=/projects/green-mango/firmware/u-boot/tools
 CROSS_COMPILE?=arm-linux-gnueabihf-
 processors=$(shell grep -c ^processor /proc/cpuinfo)
 cflags="-O2 -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard"
