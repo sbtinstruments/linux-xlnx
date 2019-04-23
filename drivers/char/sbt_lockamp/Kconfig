@@ -1,0 +1,18 @@
+#
+# SBT Instruments lock-in amplifier configuration
+#
+
+menu "SBT Instruments lock-in amplifier"
+
+config SBT_LOCKAMP
+	tristate "SBT Instruments lock-in amplifier support"
+	help
+	  Enable support for the SBT Instruments lock-in amplifier.
+
+	  This driver may be built as a module ( = code which can be
+	  inserted in and removed from the running kernel whenever you want).
+	  The module will be called lockin_amplifier. If you want to do that, say M
+	  here.
+
+endmenu
+
