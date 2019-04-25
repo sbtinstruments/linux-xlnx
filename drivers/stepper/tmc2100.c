@@ -38,16 +38,14 @@ static void tmc2100_get_pwm_state(struct tmc2100 *tmc, int velocity,
                                   struct pwm_state *state)
 {
 	int is = tmc2100_cfg.max - abs(velocity);
-	int period = is * (is / 10) + is + 125;
-	int power = 0 != velocity;
+	state->period = is * (is / 10) + is + 125;;
 	state->polarity = PWM_POLARITY_NORMAL;
-	state->enabled = power;
 	if (0 != velocity) {
-		state->period = period;
-		state->duty_cycle = period / 2; /* 50 % */
+		state->duty_cycle = state->period / 2; /* 50 % */
+		state->enabled = true;
 	} else {
-		state->period = 0;
 		state->duty_cycle = 0;
+		state->enabled = false;
 	}
 }
 
