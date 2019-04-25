@@ -1,0 +1,24 @@
+#
+# Stepper motor drivers configuration
+#
+
+menuconfig STEPPER
+	tristate "Stepper motor drivers"
+	help
+	  Say Y here if you want support for various stepper motor drivers.
+
+if STEPPER
+
+config STEPPER_TMC2100
+	tristate "Trinamic Motion Control TMC2100 stepper motor driver"
+	depends on PWM && GPIOLIB && OF
+	help
+	  Enable support for the Trinamic Motion Control TMC2100 stepper motor
+	  driver.
+
+	  This driver may be built as a module ( = code which can be
+	  inserted in and removed from the running kernel whenever you want).
+	  The module will be called synclink_cs.  If you want to do that, say M
+	  here.
+
+endif
