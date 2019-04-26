@@ -73,9 +73,9 @@ static void xlnx_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 }
 
 static int xlnx_pwm_set_polarity(struct pwm_chip *chip, struct pwm_device *pwm,
-                             enum pwm_polarity polarity)
+                                 enum pwm_polarity polarity)
 {
-	return -EFAULT;
+	return -ENOTSUPP;
 }
 
 static const struct pwm_ops xlnx_pwm_ops = {
