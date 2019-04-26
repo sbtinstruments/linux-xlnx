@@ -131,35 +131,8 @@ static int tmc2100_get_pwms(struct tmc2100 *tmc, struct platform_device *pdev)
 	return 0;
 }
 
-static void tmc2100_init_pwms(struct tmc2100 *tmc)
+static void tmc2100_init_gpios(struct tmc2100 *tmc)
 {
-	struct pwm_state ref_state = {
-		.period = 10000, /* 100 KHz */
-		.duty_cycle = 0,
-		.enabled = true,
-		.polarity = PWM_POLARITY_NORMAL,
-	};
-	struct pwm_state step_state = {
-		.period = 0,
-		.duty_cycle = 0,
-		.enabled = true,
-		.polarity = PWM_POLARITY_NORMAL,
-	};
-	pwm_apply_state(tmc->ref, &ref_state);
-	pwm_apply_state(tmc->step, &step_state);
-}
-
-static int tmc2100_init(struct tmc2100 *tmc, struct platform_device *pdev)
-{
-	int err;
-	err = tmc2100_get_gpios(tmc, pdev);
-	if (err) {
-		return err;
-	}
-	err = tmc2100_get_pwms(tmc, pdev);
-	if (err) {
-		return err;
-	}
 	/* The GPIOs are tri-state so some are set to input intentionally. */
 	/* Low setting, recommended */
 	gpiod_set_value(tmc->cfg[0], 0);
@@ -174,10 +147,34 @@ static int tmc2100_init(struct tmc2100 *tmc, struct platform_device *pdev)
 	gpiod_set_value(tmc->cfg[5], 1);
 	/* Enabled, standstill power down */
 	gpiod_direction_input(tmc->cfg6_enn);
+}
 
+static void tmc2100_init_pwms(struct tmc2100 *tmc)
+{
+	struct pwm_state ref_state;
+	struct pwm_state step_state;
+	pwm_init_state(tmc->ref, &ref_state);
+	ref_state.enabled = true;
+	pwm_apply_state(tmc->ref, &ref_state);
+	pwm_init_state(tmc->step, &step_state);
+	step_state.enabled = false;
+	pwm_apply_state(tmc->step, &step_state);
+}
+
+static int tmc2100_init(struct tmc2100 *tmc, struct platform_device *pdev)
+{
+	int err;
+	err = tmc2100_get_gpios(tmc, pdev);
+	if (err) {
+		return err;
+	}
+	err = tmc2100_get_pwms(tmc, pdev);
+	if (err) {
+		return err;
+	}
+	tmc2100_init_gpios(tmc);
 	tmc2100_init_pwms(tmc);
 	tmc2100_set_ref_voltage(tmc, 2500); /* 2.5 V */
-
 	return 0;
 }
 
