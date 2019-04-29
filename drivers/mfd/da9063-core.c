@@ -3,13 +3,15 @@
  *
  * Copyright 2012 Dialog Semiconductors Ltd.
  * Copyright 2013 Philipp Zabel, Pengutronix
+ * Copyright 2019 Frederik Peter Aalund, SBT Instruments
  *
  * Author: Krystian Garbaciak, Dialog Semiconductor
  * Author: Michal Hajduk, Dialog Semiconductor
+ * Author: Frederik Peter Aalund <fpa@sbtinstruments.com>
  *
  *  This program is free software; you can redistribute  it and/or modify it
  *  under  the terms of  the GNU General  Public License as published by the
- *  Free Software Foundation;  either version 2 of the  License, or (at your
+ *  Free Software Foundation;  either version 2 of the	License, or (at your
  *  option) any later version.
  *
  */
@@ -32,6 +34,8 @@
 #include <linux/proc_fs.h>
 #include <linux/kthread.h>
 #include <linux/uaccess.h>
+#include <linux/i2c.h>
+#include <linux/pm.h>
 
 
 static struct resource da9063_regulators_resources[] = {
@@ -114,6 +118,14 @@ static const struct mfd_cell da9063_devs[] = {
 		.of_compatible	= "dlg,da9063-rtc",
 	},
 };
+
+static struct i2c_client *da9063_i2c_client;
+
+static void da9063_power_off(void)
+{
+	i2c_smbus_write_byte_data(da9063_i2c_client, DA9063_REG_CONTROL_F,
+	                          DA9063_SHUTDOWN);
+}
 
 static int da9063_clear_fault_log(struct da9063 *da9063)
 {
@@ -249,10 +261,21 @@ int da9063_device_init(struct da9063 *da9063, unsigned int irq)
 		}
 	}
 
+	if (of_device_is_system_power_controller(da9063->dev->of_node)) {
+		if (!pm_power_off) {
+			da9063_i2c_client = to_i2c_client(da9063->dev);
+			pm_power_off = da9063_power_off;
+		} else {
+			dev_err(da9063->dev, "Failed to set power off function. "
+			                     "Another function is already registered.\n");
+		}
+	}
+
 	return ret;
 }
 
 MODULE_DESCRIPTION("PMIC driver for Dialog DA9063");
 MODULE_AUTHOR("Krystian Garbaciak");
 MODULE_AUTHOR("Michal Hajduk");
+MODULE_AUTHOR("Frederik Peter Aalund");
 MODULE_LICENSE("GPL");
