@@ -240,6 +240,7 @@ static void pwm_export_release(struct device *child)
 
 static int pwm_export_child(struct device *parent, struct pwm_device *pwm)
 {
+	struct pwm_chip *chip = dev_get_drvdata(parent);
 	struct pwm_export *export;
 	char *pwm_prop[2];
 	int ret;
@@ -260,7 +261,7 @@ static int pwm_export_child(struct device *parent, struct pwm_device *pwm)
 	export->child.parent = parent;
 	export->child.devt = MKDEV(0, 0);
 	export->child.groups = pwm_groups;
-	dev_set_name(&export->child, "pwm%u", pwm->hwpwm);
+	dev_set_name(&export->child, "pwm-%d:%u", chip->base, pwm->hwpwm);
 
 	ret = device_register(&export->child);
 	if (ret) {
