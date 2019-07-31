@@ -523,6 +523,12 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 
 	dev_dbg(&pdev->dev, "got pwm for backlight\n");
 
+	/*
+	 * FIXME: pwm_apply_args() should be removed when switching to
+	 * the atomic PWM API.
+	 */
+	pwm_apply_args(pb->pwm);
+
 	if (!data->levels) {
 		/* Get the PWM period (in nanoseconds) */
 		pwm_get_state(pb->pwm, &state);
@@ -542,12 +548,6 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 
 		pb->levels = data->levels;
 	}
-
-	/*
-	 * FIXME: pwm_apply_args() should be removed when switching to
-	 * the atomic PWM API.
-	 */
-	pwm_apply_args(pb->pwm);
 
 	/*
 	 * The DT case will set the pwm_period_ns field to 0 and store the
