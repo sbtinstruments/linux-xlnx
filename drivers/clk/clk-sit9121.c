@@ -25,14 +25,14 @@ static int sit9121_prepare(struct clk_hw *hw)
 	if (error) {
 		return error;
 	}
-	pr_debug("sit9121: Prepare\n");
+	pr_debug("Prepare\n");
 	return 0;
 }
 
 static void sit9121_unprepare(struct clk_hw *hw)
 {
 	regulator_disable(to_sit9121(hw)->vdd); /* Ignore return value */
-	pr_debug("sit9121: Unprepare\n");
+	pr_debug("Unprepare\n");
 }
 
 static unsigned long sit9121_recalc_rate(struct clk_hw *hw,
