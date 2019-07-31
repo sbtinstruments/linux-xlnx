@@ -316,6 +316,13 @@ config COMMON_CLK_STM32H7
 	---help---
 	  Support for stm32h7 SoC family clocks
 
+config COMMON_CLK_SIT9121
+	def_bool COMMON_CLK
+	depends on OF
+	help
+	---help---
+	  Support for SiT9121 clocks
+
 source "drivers/clk/actions/Kconfig"
 source "drivers/clk/bcm/Kconfig"
 source "drivers/clk/hisilicon/Kconfig"
