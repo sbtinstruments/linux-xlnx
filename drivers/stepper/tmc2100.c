@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+/*
+ * Copyright (C) 2019 Frederik Peter Aalund <fpa@sbtinstruments.com>
+ */
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
