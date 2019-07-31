@@ -60,6 +60,7 @@ obj-$(CONFIG_COMMON_CLK_STM32H7)	+= clk-stm32h7.o
 obj-$(CONFIG_COMMON_CLK_STM32MP157)	+= clk-stm32mp1.o
 clk-si5324drv-y				:= si5324drv.o clk-si5324.o
 obj-$(CONFIG_COMMON_CLK_SI5324)		+= clk-si5324drv.o
+obj-$(CONFIG_COMMON_CLK_SIT9121)	+= clk-sit9121.o
 obj-$(CONFIG_ARCH_TANGO)		+= clk-tango4.o
 obj-$(CONFIG_CLK_TWL6040)		+= clk-twl6040.o
 obj-$(CONFIG_ARCH_U300)			+= clk-u300.o
