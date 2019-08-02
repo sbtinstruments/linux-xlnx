@@ -145,4 +145,21 @@ config SPI_STM32_QUADSPI
 	  This enables support for the STM32 Quad SPI controller.
 	  We only connect the NOR to this controller.
 
+config SPI_AT25SF041
+	tristate "AT25SF041 NOR flash memory"
+	help
+	  This enables support for the AT25SF041 NOR flash memory.
+
+config SPI_AT25SF041_TEST_CON
+	bool "AT25SF041: Check the connection status on read/write"
+	default y
+	help
+	  Use to ensure that the device is still physically connected.
+	  If the memory chip can be removed at any point in time, this
+	  option will ensure proper operation. User space will get an
+	  I/O error if the device is physically disconnected.
+
+	  Normal operation resumes when the device is physically
+	  reconnected.
+
 endif # MTD_SPI_NOR
