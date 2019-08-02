@@ -19,5 +19,5 @@ spi-nor-objs			+= xilinx.o
 spi-nor-objs			+= xmc.o
 spi-nor-$(CONFIG_DEBUG_FS)	+= debugfs.o
 obj-$(CONFIG_MTD_SPI_NOR)	+= spi-nor.o
-
 obj-$(CONFIG_MTD_SPI_NOR)	+= controllers/
+obj-$(CONFIG_SPI_AT25SF041)	+= at25sf041.o
