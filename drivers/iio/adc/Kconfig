@@ -387,6 +387,16 @@ config LPC32XX_ADC
 	  activate only one via device tree selection.  Provides direct access
 	  via sysfs.
 
+config LTC214X
+	depends on OF
+	tristate "Linear Technology LTC214x driver"
+	help
+	  Say yes here to build support for Linear Technology LTC214X ADCs.
+	  E.g., devices such as the LTC2145-14.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called ltc214x.
+
 config LTC2471
 	tristate "Linear Technology LTC2471 and LTC2473 ADC driver"
 	depends on I2C
