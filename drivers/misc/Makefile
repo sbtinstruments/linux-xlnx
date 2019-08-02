@@ -61,4 +61,3 @@ obj-$(CONFIG_XILINX_FLEX_PM)	+= xilinx_flex_pm.o
 obj-$(CONFIG_XILINX_TRAFGEN)	+= xilinx_trafgen.o
 obj-$(CONFIG_XILINX_JESD204B)	+= jesd204b/
 obj-$(CONFIG_XILINX_AIE)	+= xilinx-ai-engine/
-obj-$(CONFIG_LTC214X)		+= ltc214x.o
