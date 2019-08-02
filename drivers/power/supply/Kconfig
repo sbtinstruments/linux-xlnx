@@ -347,6 +347,12 @@ config BATTERY_MAX17042
 	  with MAX17042. This driver also supports max17047/50 chips which are
 	  improved version of max17042.
 
+config BATTERY_MAX1720X
+	tristate "MAX17201/MAX17205 fuel gauge driver"
+	depends on I2C
+	help
+	  Say Y to enable support for MAX17201/MAX17205 Fuel Gauge driver.
+
 config BATTERY_MAX1721X
 	tristate "MAX17211/MAX17215 standalone gas-gauge"
 	depends on W1
