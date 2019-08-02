@@ -530,13 +530,6 @@ config TMR_INJECT
 
 	  Say N here unless you know what you are doing.
 
-config LTC214X
-	depends on OF
-	tristate "Linear Technology LTC214x driver"
-	help
-	  Enable support for Linear Technology LTC214x devices.
-	  E.g., devices such as the LTC2145-14.
-
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
