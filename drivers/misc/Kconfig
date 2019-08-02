@@ -537,13 +537,6 @@ config MISC_RTSX
 	tristate
 	default MISC_RTSX_PCI || MISC_RTSX_USB
 
-config LTC214X
-	depends on OF
-	tristate "Linear Technology LTC214x driver"
-	help
-	  Enable support for Linear Technology LTC214x devices.
-	  E.g., devices such as the LTC2145-14.
-
 source "drivers/misc/jesd204b/Kconfig"
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
