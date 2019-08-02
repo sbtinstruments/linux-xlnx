@@ -148,6 +148,17 @@ config TINYDRM_ILI9486
 
 	  If M is selected the module will be called ili9486.
 
+config TINYDRM_ILI9488
+	tristate "DRM support for ILI9488 display panels"
+	depends on DRM
+	select DRM_MIPI_DBI
+	select BACKLIGHT_CLASS_DEVICE
+	help
+	  DRM driver for the following Ilitek ILI9488 panels:
+	  * UMOH-P220MD-T 3.5" 320x480 TFT (from U.R.T.)
+
+	  If M is selected the module will be called ili9488.
+
 config TINYDRM_MI0283QT
 	tristate "DRM support for MI0283QT"
 	depends on DRM && SPI
