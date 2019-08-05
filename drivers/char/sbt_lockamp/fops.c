@@ -1,3 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/*
+ * SBT Instruments Lock-in Amplifier
+ *
+ * Copyright (c) 2019, Frederik Peter Aalund <fpa@sbtinstruments.com>
+ */
 #include <asm/io.h>
 #include <linux/circ_buf.h>
 #include <linux/delay.h>
@@ -6,9 +12,11 @@
 #include <linux/sched/types.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/pm_runtime.h>
 
 #include "lockin_amplifier.h"
 #include "hw.h"
+#include "pm.h"
 
 struct chunk_header {
 	u64 last_start_time_ns;
@@ -134,16 +142,25 @@ static int device_open(struct inode *inode, struct file *file)
 	lockamp = container_of(inode->i_cdev, struct lockamp, cdev);
 	file->private_data = lockamp;
 	/* Only a single reader at a time */
-	if (0 < open_count)
+	if (0 < open_count) {
 		return -EBUSY;
+	}
 	++open_count;
+
+	/* power */
+	result = lockamp_pm_get(lockamp);
+	if (result < 0) {
+		dev_err(lockamp->dev, "Failed to get pm runtime: %d\n", result);
+		goto out_open_count;
+	}
+
 	/* Thread */
 	thread = kthread_create(fifo_to_sbuf, lockamp, "lockamp0");
 	if (IS_ERR(thread)) {
 		dev_alert(lockamp->dev, "Failed to create kthread.\n");
 		result = PTR_ERR(thread);
 		thread = NULL;
-        goto out_open_count;
+        goto out_pm;
 	}
 	result = increase_task_priority(thread);
 	if (0 != result) {
@@ -161,6 +178,8 @@ out_thread:
 	thread = NULL;
 out_open_count:
 	--open_count;
+out_pm:
+	lockamp_pm_put(lockamp);
 out:
 	return result;
 }
@@ -174,11 +193,13 @@ static int device_release(struct inode *inode, struct file *file)
 		thread = NULL;
 	}
 	--open_count;
+	lockamp_pm_put(lockamp);
 	return 0;
 }
 
 static ssize_t pop_chunk_to_user(struct circ_sample_buf *cbuf,
-           struct csbuf_snapshot *cbuf_snap, char __user *buffer, size_t length)
+                                 struct csbuf_snapshot *cbuf_snap,
+                                 char __user *buffer, size_t length)
 {
 	size_t cbuf_size_to_end_n = (size_t)CIRC_CNT_TO_END(cbuf_snap->head,
 	                                         cbuf_snap->tail, cbuf->capacity_n);
@@ -196,7 +217,8 @@ static ssize_t pop_chunk_to_user(struct circ_sample_buf *cbuf,
 }
 
 static ssize_t pop_to_user(struct circ_sample_buf *cbuf,
-           struct csbuf_snapshot *cbuf_snap, char __user *buffer, size_t length)
+                           struct csbuf_snapshot *cbuf_snap,
+                           char __user *buffer, size_t length)
 {
 	ssize_t chunk_result;
 	char *pos = buffer;
@@ -218,12 +240,14 @@ static ssize_t pop_to_user(struct circ_sample_buf *cbuf,
 }
 
 static int chunk_get_info(struct lockamp *lockamp, size_t usr_buf_length,
-                      struct csbuf_snapshot *sbuf_snap, struct chunk_info *info)
+                          struct csbuf_snapshot *sbuf_snap,
+                          struct chunk_info *info)
 {
 	size_t data_size_n;
 	/* The user-provided buffer can not contain a chunk */
-	if (sizeof(struct chunk_header) > usr_buf_length)
+	if (sizeof(struct chunk_header) > usr_buf_length) {
 		return -EINVAL;
+	}
 	data_size_n = (usr_buf_length - sizeof(struct chunk_header)) / sizeof(struct sample);
 	data_size_n = min(data_size_n, sbuf_snap->size_n);
 	info->header.last_start_time_ns = lockamp->last_start_time_ns;
@@ -239,7 +263,8 @@ static void chunk_commit_info(struct lockamp *lockamp, struct chunk_info *info)
 }
 
 static ssize_t write_header_to_user(struct lockamp *lockamp,
-                struct chunk_header *header, char __user *buffer, size_t length)
+                                    struct chunk_header *header,
+                                    char __user *buffer, size_t length)
 {
 	ssize_t result;
 	result = copy_to_user(buffer, header, sizeof(struct chunk_header));
@@ -251,7 +276,7 @@ static ssize_t write_header_to_user(struct lockamp *lockamp,
 }
 
 static void reader_get_sbuf_snapshot(struct lockamp *lockamp,
-                                                    struct csbuf_snapshot *snap)
+                                     struct csbuf_snapshot *snap)
 {
 	snap->head = smp_load_acquire(&lockamp->signal_buf.head);
 	snap->tail = lockamp->signal_buf.tail;
@@ -310,7 +335,7 @@ static ssize_t device_read(
 }
 
 static ssize_t device_write(struct file *filp, const char __user *buff,
-                                                       size_t len, loff_t * off)
+                            size_t len, loff_t * off)
 {
 	return -EPERM;
 }
