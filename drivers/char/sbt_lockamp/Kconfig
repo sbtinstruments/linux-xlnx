@@ -14,5 +14,17 @@ config SBT_LOCKAMP
 	  The module will be called lockin_amplifier. If you want to do that, say M
 	  here.
 
+config SBT_LOCKAMP_FIFO_POP_RELAXED
+	bool "Read from the hardware FIFO without memory barriers"
+	help
+	  Use relaxed reads (without memory barriers) to access the FIFO.
+	  On ARM, this will omit the "dsb sy" instruction after each FIFO pop.
+
+	  Disable this option to test the effects of memory barriers on
+	  data integrity.
+
+	  In practice (on ARMv7-A), data integrity seems fine with the
+	  relaxed reads.
+
 endmenu
 
