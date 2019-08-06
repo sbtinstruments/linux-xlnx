@@ -39,7 +39,7 @@
 struct xlnx_pwm_chip {
 	struct pwm_chip chip;
 	struct device *dev;
-	int scaler;
+	int clk_period;
 	void __iomem *mmio_base;
 };
 
@@ -52,8 +52,21 @@ static int xlnx_pwm_config(struct pwm_chip *chip, struct pwm_device *pwm,
                            int duty_ns, int period_ns)
 {
 	struct xlnx_pwm_chip *pc = container_of(chip, struct xlnx_pwm_chip, chip);
-	iowrite32(  (duty_ns / pc->scaler) - 2, pc->mmio_base + DUTY);
-	iowrite32((period_ns / pc->scaler) - 2, pc->mmio_base + PERIOD);
+	int tlrx_duty = max(2, duty_ns / pc->clk_period) - 2;
+	int tlrx_period = max(2, period_ns / pc->clk_period) - 2;
+	/* When duty_cycle==period, the output is zero. The output should have
+	 * been full saturation. As a workaround, we cap the duty cycle so that
+	 * duty_cycle<=period. In practice, this means that the output will never
+	 * reach full saturation (100% duty cycle) but only close to it (~99.9%
+	 * duty cycle). */
+	tlrx_duty = min(tlrx_period - 1, tlrx_duty);
+	dev_dbg(chip->dev, "duty cycle [ns]: %d\n", duty_ns);
+	dev_dbg(chip->dev, "period     [ns]: %d\n", period_ns);
+	dev_dbg(chip->dev, "clk_period  [1]: %d\n", pc->clk_period);
+	dev_dbg(chip->dev, "tlrx_duty   [1]: %d\n", tlrx_duty);
+	dev_dbg(chip->dev, "tlrx_period [1]: %d\n", tlrx_period);
+	iowrite32(tlrx_duty, pc->mmio_base + DUTY);
+	iowrite32(tlrx_period, pc->mmio_base + PERIOD);
 	return 0;
 }
 
@@ -107,8 +120,8 @@ static int xlnx_pwm_probe(struct platform_device *pdev)
 		return PTR_ERR(clk);
 	}
 
-	/* catch the difference between the clock and the basic time base ns */
-	pwm->scaler = (int)1000000000 / clk_get_rate(clk);
+	/* convert the clock rate into the clock period (Hz to ns) */
+	pwm->clk_period = (int)1000000000 / clk_get_rate(clk);
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	pwm->mmio_base = devm_ioremap_resource(&pdev->dev, r);
