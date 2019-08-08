@@ -9,6 +9,7 @@
 #include <asm/atomic.h>
 #include <linux/cdev.h>
 #include <linux/pm_runtime.h>
+#include <linux/regulator/consumer.h>
 #include <linux/sysfs.h>
 
 struct sample;
@@ -46,6 +47,7 @@ struct lockamp {
 	dev_t chrdev_no;
 	struct iio_channel *adc_site0, *adc_site1, *dac_site0, *dac_site1;
 	u32 __iomem *control;
+	struct regulator *amp_supply;
 
 	struct circ_sample_buf signal_buf;
 	struct mutex signal_buf_m;
