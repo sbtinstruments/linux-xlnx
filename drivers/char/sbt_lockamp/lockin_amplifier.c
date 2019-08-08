@@ -159,10 +159,18 @@ static int lockamp_probe(struct platform_device *pdev)
 	}
 	dev_set_drvdata(lockamp->dev, lockamp);
 
-	/* Get I/O resources */
+	/* I/O resources */
 	result = lockamp_get_io_resources(lockamp, pdev);
 	if (0 != result) {
 		dev_err(lockamp->dev, "Failed to initialize lock-in amplifier.\n");
+		goto out_device;
+	}
+
+	/* Vs regulator for the injection amp */
+	lockamp->amp_supply = devm_regulator_get(&pdev->dev, "amp");
+	if (IS_ERR(lockamp->amp_supply)) {
+		dev_err(lockamp->dev, "Failed to get 'amp' regulator.\n");
+		result = PTR_ERR(lockamp->amp_supply);
 		goto out_device;
 	}
 
