@@ -46,7 +46,7 @@ static int lockamp_powerdown_iio_chan(struct iio_channel *chan, bool powerdown)
 	return 0;
 }
 
-static int lockamp_enable(struct device *dev, bool enabled)
+static int lockamp_enable_converters(struct device *dev, bool enabled)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
 	int error;
@@ -66,16 +66,37 @@ static int lockamp_enable(struct device *dev, bool enabled)
 
 static int lockamp_pm_runtime_suspend(struct device *dev)
 {
-	int error = lockamp_enable(dev, false);
+	struct lockamp *lockamp = dev_get_drvdata(dev);
+	int error;
+	error = lockamp_enable_converters(dev, false);
+	if (error) {
+		dev_err(dev, "Failed to disable the AD/DA converters: %d\n", error);
+		return error;
+	}
+	error = regulator_disable(lockamp->amp_supply);
+	if (error) {
+		dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
+		return error;
+	}
 	dev_dbg(dev, "Success\n");
-	return error;
+	return 0;
 }
 
 static int lockamp_pm_runtime_resume(struct device *dev)
 {
-	int error = lockamp_enable(dev, true);
+	struct lockamp *lockamp = dev_get_drvdata(dev);
+	int error = lockamp_enable_converters(dev, true);
+	if (error) {
+		dev_err(dev, "Failed to enable the AD/DA converters: %d\n", error);
+		return error;
+	}
+	error = regulator_enable(lockamp->amp_supply);
+	if (error) {
+		dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
+		return error;
+	}
 	dev_dbg(dev, "Success\n");
-	return error;
+	return 0;
 }
 
 struct dev_pm_ops lockamp_pm_ops = {
