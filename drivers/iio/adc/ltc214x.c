@@ -27,6 +27,9 @@
 #define LTC214X_DCS					BIT(0) /* clock duty cycle stabilizer */
 #define LTC214X_CLKINV				BIT(3)
 #define LTC214X_CLKPHASE_MASK	 	0x6
+/* OUTPUT_MODE_REG bits */
+#define LTC214X_OUTMODE_MASK 		0x3
+#define LTC214X_TERMON				BIT(3)
 /* DATA_FORMAT_REG bits */
 #define LTC214X_TWOSCOMP			BIT(0)
 #define LTC214X_RAND				BIT(1)
@@ -49,6 +52,13 @@ enum ltc214x_clkphase {
 	LTC214X_DELAY_135 = 0x3,
 };
 
+enum ltc214x_outmode {
+	LTC214X_FULL_RATE_CMOS = 0x0,
+	LTC214X_DDR_LVDS = 0x1,
+	LTC214X_DDR_CMOS = 0x2,
+	LTC214X_NOT_USED = 0x3,
+};
+
 enum ltc214x_test_pattern {
 	LTC214X_TEST_PATTERN_OFF = 0x0,
 	LTC214X_ALL_ZERO = 0x1,
@@ -65,21 +75,25 @@ struct ltc214x {
 
 struct ltc214x_state {
 	bool clkinv;
+	bool termon;
 	bool twos_complement;
 	bool rand;
 	bool abp;
 	enum ltc214x_pwrctrl power_control;
 	enum ltc214x_clkphase clkphase;
+	enum ltc214x_outmode outmode;
 	enum ltc214x_test_pattern test_pattern;
 };
 
 static struct ltc214x_state ltc214x_default_state = {
 	.clkinv = false,
+	.termon = false,
 	.twos_complement = false,
 	.rand = false,
 	.abp = false,
 	.power_control = LTC214X_NORMAL,
 	.clkphase = LTC214X_DELAY_NONE,
+	.outmode = LTC214X_FULL_RATE_CMOS,
 	.test_pattern = LTC214X_TEST_PATTERN_OFF,
 };
 
@@ -107,6 +121,20 @@ static int ltc214x_set_clkphase(struct ltc214x *ltc214x,
 	return regmap_update_bits(ltc214x->regmap, LTC214X_TIMING_REG,
 	                          LTC214X_CLKPHASE_MASK,
 	                          (unsigned int)clkphase << 1);
+}
+
+static int ltc214x_set_outmode(struct ltc214x *ltc214x,
+                               enum ltc214x_outmode outmode)
+{
+	return regmap_update_bits(ltc214x->regmap, LTC214X_OUTPUT_MODE_REG,
+	                          LTC214X_OUTMODE_MASK,
+	                          (unsigned int)outmode);
+}
+
+static int ltc214x_set_termon(struct ltc214x *ltc214x, bool enabled)
+{
+	return regmap_update_bits(ltc214x->regmap, LTC214X_OUTPUT_MODE_REG,
+	                          LTC214X_TERMON, LTC214X_TO_VALUE(enabled));
 }
 
 static int ltc214x_set_dcs(struct ltc214x *ltc214x, bool enabled)
@@ -200,6 +228,16 @@ static int ltc214x_apply_state(struct device *dev, struct ltc214x_state *state)
 		dev_err(dev, "Failed to set clock phase: %d\n", error);
 		return error;
 	}
+	error = ltc214x_set_outmode(ltc214x, state->outmode);
+	if (error) {
+		dev_err(dev, "Failed to set output mode: %d\n", error);
+		return error;
+	}
+	error = ltc214x_set_termon(ltc214x, state->termon);
+	if (error) {
+		dev_err(dev, "Failed to set internal termination: %d\n", error);
+		return error;
+	}
 	error = ltc214x_set_dcs(ltc214x, true);
 	if (error) {
 		dev_err(dev, "Failed to enable DCS: %d\n", error);
@@ -259,6 +297,26 @@ static int ltc214x_of_read_clkphase(struct device_node *of_node,
 	return 0;
 }
 
+static int ltc214x_of_read_outmode(struct device_node *of_node,
+                                   enum ltc214x_outmode *outmode,
+                                   const char **outmode_name)
+{
+	if (!of_property_read_string(of_node, "output-mode", outmode_name)) {
+		if (0 == strcmp(*outmode_name, "full-rate-cmos")) {
+			*outmode = LTC214X_FULL_RATE_CMOS;
+		} else if (0 == strcmp(*outmode_name, "ddr-lvds")) {
+			*outmode = LTC214X_DDR_LVDS;
+		} else if (0 == strcmp(*outmode_name, "ddr-cmos")) {
+			*outmode = LTC214X_DDR_CMOS;
+		} else if (0 == strcmp(*outmode_name, "not-used")) {
+			*outmode = LTC214X_NOT_USED;
+		} else {
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
+
 static int ltc214x_of_read_test_pattern(struct device_node *of_node,
                                         enum ltc214x_test_pattern *pattern,
                                         const char **pattern_name)
@@ -305,6 +363,7 @@ static int ltc214x_of_get_state(struct device *dev, struct ltc214x_state *state)
 {
 	int error = 0;
 	struct device_node *node = dev->of_node;
+	const char *outmode_name;
 	const char *pattern_name;
 	const char *pwrctrl_name;
 	u32 clkphase_degrees;
@@ -320,6 +379,10 @@ static int ltc214x_of_get_state(struct device *dev, struct ltc214x_state *state)
 	bval = of_property_read_bool(node, "invert-clock");
 	if (bval) {
 		state->clkinv = bval;
+	}
+	bval = of_property_read_bool(node, "internal-termination");
+	if (bval) {
+		state->termon = bval;
 	}
 	bval = of_property_read_bool(node, "twos-complement");
 	if (bval) {
@@ -349,6 +412,15 @@ static int ltc214x_of_get_state(struct device *dev, struct ltc214x_state *state)
 	if (error) {
 		dev_warn(dev, "Invalid clock phase delay: %d. "
 		              "Using default clock phase delay.\n", clkphase_degrees);
+		return error;
+	}
+
+	error = ltc214x_of_read_outmode(node,
+	                                &state->outmode,
+	                                &outmode_name);
+	if (error) {
+		dev_warn(dev, "Invalid outmode mode: %s. "
+		              "Using the default output mode.\n", outmode_name);
 		return error;
 	}
 
