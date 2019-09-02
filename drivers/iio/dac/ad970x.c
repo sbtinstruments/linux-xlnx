@@ -269,13 +269,11 @@ static int ad970x_calibrate(struct device *dev)
 		return error;
 	}
 
+	/* Convert freq to period (Hz to ns) */
+	calclk_period_ns = 1000000000 / (clk_rate / calclk_div);
+	cal_time_us = (calclk_period_ns * AD970X_CALCLK_CAL_CYCLES) / 1000;
 	/* Wait until calibration completes */
 	for (i = 0; max_tries > i; ++i) {
-		/* Convert freq to period (Hz to ns) */
-		calclk_period_ns = 1000000000 / (clk_rate / calclk_div);
-		/* Wait 4500 calibration clock cycles. This should be enough
-		 * according to the data sheet. */
-		cal_time_us = (calclk_period_ns * AD970X_CALCLK_CAL_CYCLES) / 1000;
 		/* Sleep for the calibration time (but at most 100 ms) */
 		usleep_range(cal_time_us, 100000);
 		/* Check completion status */
