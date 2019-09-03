@@ -173,6 +173,7 @@ static int lockamp_probe(struct platform_device *pdev)
 		result = PTR_ERR(lockamp->amp_supply);
 		goto out_device;
 	}
+	lockamp->amp_supply_force_off = true;
 
 	/* Power */
 	pm_runtime_set_autosuspend_delay(&pdev->dev, 3000);

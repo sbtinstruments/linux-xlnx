@@ -73,10 +73,12 @@ static int lockamp_pm_runtime_suspend(struct device *dev)
 		dev_err(dev, "Failed to disable the AD/DA converters: %d\n", error);
 		return error;
 	}
-	error = regulator_disable(lockamp->amp_supply);
-	if (error) {
-		dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
-		return error;
+	if (!lockamp->amp_supply_force_off) {
+		error = regulator_disable(lockamp->amp_supply);
+		if (error) {
+			dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", error);
+			return error;
+		}
 	}
 	dev_dbg(dev, "Success\n");
 	return 0;
@@ -90,10 +92,12 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 		dev_err(dev, "Failed to enable the AD/DA converters: %d\n", error);
 		return error;
 	}
-	error = regulator_enable(lockamp->amp_supply);
-	if (error) {
-		dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
-		return error;
+	if (!lockamp->amp_supply_force_off) {
+		error = regulator_enable(lockamp->amp_supply);
+		if (error) {
+			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
+			return error;
+		}
 	}
 	dev_dbg(dev, "Success\n");
 	return 0;
