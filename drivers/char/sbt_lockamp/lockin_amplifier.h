@@ -48,6 +48,7 @@ struct lockamp {
 	struct iio_channel *adc_site0, *adc_site1, *dac_site0, *dac_site1;
 	u32 __iomem *control;
 	struct regulator *amp_supply;
+	bool amp_supply_force_off;
 
 	struct circ_sample_buf signal_buf;
 	struct mutex signal_buf_m;
