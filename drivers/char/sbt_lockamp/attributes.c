@@ -571,6 +571,55 @@ static ssize_t fifo_read_delay_us_show(
 }
 DEVICE_ATTR(fifo_read_delay_us, S_IRUGO, fifo_read_delay_us_show, NULL);
 
+/* amp_supply_force_off */
+static ssize_t amp_supply_force_off_show(
+	struct device *device,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct lockamp *lockamp = dev_get_drvdata(device);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", lockamp->amp_supply_force_off);
+}
+static ssize_t amp_supply_force_off_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct lockamp *lockamp = dev_get_drvdata(dev);
+	int error = kstrtobool(buf, &lockamp->amp_supply_force_off);
+	if (0 != error) {
+		return error;
+	}
+	/* Regulator is currently enabled... */
+	if (regulator_is_enabled(lockamp->amp_supply)) {
+		/* ...and we want to force it off... */
+		if (lockamp->amp_supply_force_off) {
+			/* ...so we disable the regulator right away. */
+			error = regulator_disable(lockamp->amp_supply);
+			if (error) {
+				dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", error);
+				return error;
+			}
+		}
+	}
+	/* Regulator is currently disabled even though the system is active
+	 * and we no longer want to force it off... */
+	else if (pm_runtime_active(dev) && !lockamp->amp_supply_force_off) {
+		/* ...so we enable the regulator right way. */
+		error = regulator_enable(lockamp->amp_supply);
+		if (error) {
+			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
+			return error;
+		}
+	}
+	return count;
+}
+DEVICE_ATTR(amp_supply_force_off,
+            S_IRUGO | S_IWUSR,
+            amp_supply_force_off_show,
+            amp_supply_force_off_store);
+
 DEVICE_INT_ATTR(debug1, S_IRUGO, lockamp_debug1);
 DEVICE_INT_ATTR(debug2, S_IRUGO, lockamp_debug2);
 DEVICE_INT_ATTR(debug3, S_IRUGO, lockamp_debug3);
@@ -595,6 +644,7 @@ static struct attribute *attrs[] = {
 	&dev_attr_sample_multiplier.attr,
 	&dev_attr_fifo_read_duration_us.attr,
 	&dev_attr_fifo_read_delay_us.attr,
+	&dev_attr_amp_supply_force_off.attr,
 	&dev_attr_debug1.attr.attr,
 	&dev_attr_debug2.attr.attr,
 	&dev_attr_debug3.attr.attr,
