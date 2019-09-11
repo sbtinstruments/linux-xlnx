@@ -45,6 +45,7 @@ struct lockamp {
 	struct cdev cdev;
 	struct device *dev;
 	dev_t chrdev_no;
+	struct gpio_desc *reset;
 	struct iio_channel *adc_site0, *adc_site1, *dac_site0, *dac_site1;
 	u32 __iomem *control;
 	struct regulator *amp_supply;

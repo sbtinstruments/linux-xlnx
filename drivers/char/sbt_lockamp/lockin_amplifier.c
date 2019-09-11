@@ -4,7 +4,9 @@
  *
  * Copyright (c) 2019, Frederik Peter Aalund <fpa@sbtinstruments.com>
  */
+#include <linux/delay.h>
 #include <linux/fs.h>
+#include <linux/gpio/consumer.h>
 #include <linux/iio/consumer.h>
 #include <linux/log2.h>
 #include <linux/module.h>
@@ -104,11 +106,23 @@ static int lockamp_probe(struct platform_device *pdev)
 
 	lockamp = devm_kzalloc(&pdev->dev, sizeof(*lockamp), GFP_KERNEL);
 	if (NULL == lockamp) {
-		result = -ENOMEM;
-		goto out;
+		return -ENOMEM;
 	}
 	lockamp->dev = &pdev->dev;
 	platform_set_drvdata(pdev, lockamp);
+
+	/* Reset GPIO */
+	lockamp->reset = devm_gpiod_get(&pdev->dev, "reset", GPIOD_OUT_LOW);
+	if (IS_ERR(lockamp->reset)) {
+		dev_err(&pdev->dev, "Failed to get reset GPIO: %ld.\n",
+		        PTR_ERR(lockamp->reset));
+		return PTR_ERR(lockamp->reset);
+	}
+
+	/* Reset */
+	gpiod_set_value(lockamp->reset, 1);
+	msleep(1); /* Arbitrary */
+	gpiod_set_value(lockamp->reset, 0);
 
 	/* Init mutexes */
 	mutex_init(&lockamp->signal_buf_m);
@@ -121,8 +135,7 @@ static int lockamp_probe(struct platform_device *pdev)
 	lockamp->signal_buf.tail = 0;
 	if (NULL == lockamp->signal_buf.buf) {
 		dev_err(lockamp->dev, "Failed to allocate signal buffer.\n");
-		result = -ENOMEM;
-		goto out;
+		return -ENOMEM;
 	}
 	/* Must be a power of 2 so that the CIRC_* macros work */
 	if (!is_power_of_2(lockamp->signal_buf.capacity_n)) {
@@ -207,7 +220,7 @@ static int lockamp_probe(struct platform_device *pdev)
 
 	pm_runtime_put(&pdev->dev); /* ignore return value */
 
-	goto out;
+	return result;
 
 out_pm_get:
 	pm_runtime_put(&pdev->dev); /* ignore return value */
@@ -221,7 +234,6 @@ out_chrdev:
 	unregister_chrdev_region(lockamp->chrdev_no, 1);
 out_sbuf:
 	vfree(lockamp->signal_buf.buf);
-out:
 	return result;
 }
 
