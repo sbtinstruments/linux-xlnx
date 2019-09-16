@@ -204,10 +204,10 @@ static inline void lockamp_fifo_pop_sample(struct lockamp *lockamp, struct sampl
 {
 	int i;
 	for (i = 0; LOCKAMP_SITES_PER_SAMPLE > i; ++i) {
-		s->sites[i].hf_re = lockamp_fifo_pop(lockamp) * lockamp->sample_multiplier;
-		s->sites[i].hf_im = lockamp_fifo_pop(lockamp) * lockamp->sample_multiplier;
-		s->sites[i].lf_re = lockamp_fifo_pop(lockamp) * lockamp->sample_multiplier;
-		s->sites[i].lf_im = lockamp_fifo_pop(lockamp) * lockamp->sample_multiplier;
+		s->sites[i].hf_re = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
+		s->sites[i].hf_im = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
+		s->sites[i].lf_re = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
+		s->sites[i].lf_im = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
 	}
 }
 
