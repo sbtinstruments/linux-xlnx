@@ -481,33 +481,40 @@ static ssize_t fir_filter_store(
 }
 DEVICE_ATTR(fir_filter, S_IRUGO | S_IWUSR, fir_filter_show, fir_filter_store);
 
-static ssize_t sample_multiplier_show(
+static ssize_t sample_multipliers_show(
 	struct device *device,
 	struct device_attribute *attr,
 	char *buf)
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", lockamp->sample_multiplier);
+	return scnprintf(buf, PAGE_SIZE, "%d %d\n",
+	                 lockamp->sample_multipliers[0],
+	                 lockamp->sample_multipliers[1]);
 }
-static ssize_t sample_multiplier_store(
+static ssize_t sample_multipliers_store(
 	struct device *device,
 	struct device_attribute *attr,
 	const char *buf,
 	size_t count)
 {
+	int i;
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	int value;
-	int result = kstrtoint(buf, 0, &value);
-	if (0 != result) {
+	int values[LOCKAMP_SITES_PER_SAMPLE];
+	int result = sscanf(buf, "%d %d", &values[0], &values[1]);
+	if (LOCKAMP_SITES_PER_SAMPLE != result) {
 		return result;
 	}
 	mutex_lock(&lockamp->signal_buf_m);
-	lockamp->sample_multiplier = value;
+	for (i = 0; LOCKAMP_SITES_PER_SAMPLE > i; ++i) {
+		lockamp->sample_multipliers[i] = values[i];
+	}
 	mutex_unlock(&lockamp->signal_buf_m);
 	return count;
 }
-DEVICE_ATTR(sample_multiplier, S_IRUGO | S_IWUSR, sample_multiplier_show,
-                                                 sample_multiplier_store);
+DEVICE_ATTR(sample_multipliers,
+            S_IRUGO | S_IWUSR,
+            sample_multipliers_show,
+            sample_multipliers_store);
 
 /* latest_adc_samples
  *
@@ -644,7 +651,7 @@ static struct attribute *attrs[] = {
 	&dev_attr_dac_data_bits.attr,
 	&dev_attr_hw_debug1.attr,
 	&dev_attr_fir_filter.attr,
-	&dev_attr_sample_multiplier.attr,
+	&dev_attr_sample_multipliers.attr,
 	&dev_attr_fifo_read_duration_us.attr,
 	&dev_attr_fifo_read_delay_us.attr,
 	&dev_attr_amp_supply_force_off.attr,
