@@ -102,6 +102,7 @@ static int lockamp_probe(struct platform_device *pdev)
 {
 	struct lockamp *lockamp;
 	u32 version;
+	int i;
 	int result = 0;
 
 	lockamp = devm_kzalloc(&pdev->dev, sizeof(*lockamp), GFP_KERNEL);
@@ -208,7 +209,9 @@ static int lockamp_probe(struct platform_device *pdev)
 	}
 
 	/* Other defaults */
-	lockamp->sample_multiplier = 1;
+	for (i = 0; LOCKAMP_SITES_PER_SAMPLE > i; ++i) {
+		lockamp->sample_multipliers[i] = 1;
+	}
 	atomic_set(&lockamp->desyncs, 0);
 
 	/* Set hardware defaults */

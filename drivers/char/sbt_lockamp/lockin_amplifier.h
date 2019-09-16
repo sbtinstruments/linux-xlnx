@@ -55,7 +55,7 @@ struct lockamp {
 	struct mutex signal_buf_m;
 	struct mutex adc_buf_m;
 	char *adc_buffer;
-	int sample_multiplier;
+	int sample_multipliers[LOCKAMP_SITES_PER_SAMPLE];
 
 	atomic_t desyncs;
 	int last_desyncs;
