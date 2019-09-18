@@ -168,8 +168,8 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 	mipi_dbi_command(mipi, 0xC1, 0x41);
 	/* VCOM control 1 */
 	mipi_dbi_command(mipi, 0xC5, 0x00, 0x12, 0x80);
-	/* memory access control */
-	mipi_dbi_command(mipi, MIPI_DCS_SET_ADDRESS_MODE, 0x40);
+	/* memory access control: MX and BGR */
+	mipi_dbi_command(mipi, MIPI_DCS_SET_ADDRESS_MODE, 0x48);
 	/* pixel interchange format: RGB565 over MIPI 16 bit */
 	mipi_dbi_command(mipi, MIPI_DCS_SET_PIXEL_FORMAT,
 	                 ILI9488_DBI_16_BPP | (ILI9488_DPI_16_BPP << 4));
@@ -177,6 +177,8 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 	mipi_dbi_command(mipi, 0xB0, 0x00);
 	/* frame rate control (0x01 is 30.38 Hz; 0xA0 is 60.76 Hz) */
 	mipi_dbi_command(mipi, ILI9488_CMD_FRAME_RATE_CONTROL, 0xA0);
+	/* display inversion ON */
+	mipi_dbi_command(mipi, 0x21);
 	/* display inversion control */
 	mipi_dbi_command(mipi, ILI9488_CMD_DISPLAY_INVERSION_CONTROL,
                      ILI9488_DINV_2_DOT_INVERSION);
