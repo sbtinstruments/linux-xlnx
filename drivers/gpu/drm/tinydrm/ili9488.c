@@ -37,6 +37,7 @@
 
 struct type_b {
 	void __iomem *base;
+	bool skip_panel_init;
 };
 
 struct type_b *type_b_from_mipi_dbi(struct mipi_dbi *mipi)
@@ -80,7 +81,7 @@ static const u8 mipi_dbi_dcs_read_commands[] = {
 	0, /* sentinel */
 };
 
-static int mipi_dbi_typeb_command(struct mipi_dbi *mipi, u8 cmd, u8 *param, size_t num)
+static int mipi_dbi_type_b_command(struct mipi_dbi *mipi, u8 cmd, u8 *param, size_t num)
 {
 	struct type_b *type_b = type_b_from_mipi_dbi(mipi);
 	MIPI_DBI_DEBUG_COMMAND(cmd, param, num);
@@ -118,7 +119,7 @@ int mipi_dbi_type_b_init(struct type_b *type_b, struct mipi_dbi *mipi)
 	mipi->spi = (void *)type_b;
 
 	mipi->read_commands = mipi_dbi_dcs_read_commands;
-	mipi->command = mipi_dbi_typeb_command;
+	mipi->command = mipi_dbi_type_b_command;
 	mipi->swap_bytes = false;
 
 	DRM_DEBUG_DRIVER("Using MIPI DBI Type B (Intel 8080 type parallel bus)\n");
@@ -146,6 +147,11 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 
 	version = ioread32(type_b->base + MIPI_DBI_B_REG_VERSION);
 	DRM_DEBUG_DRIVER("MIPI DBI Type B HW version: %d\n", version);
+
+	if (type_b->skip_panel_init) {
+		mipi->enabled = true;
+		return;
+	}
 
 	/* reset */
 	mipi_dbi_type_b_hw_reset(mipi);
@@ -262,6 +268,7 @@ static int ili9488_probe(struct platform_device *pdev)
 		DRM_DEV_ERROR(dev, "Failed to ioremap 'mipi-dbi-type-b'\n");
 		return PTR_ERR(type_b->base);
 	}
+	type_b->skip_panel_init = of_property_read_bool(dev->of_node, "skip-panel-init");
 
 	ret = mipi_dbi_type_b_init(type_b, mipi);
 	if (ret) {
