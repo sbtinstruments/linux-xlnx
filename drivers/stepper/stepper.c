@@ -74,6 +74,29 @@ out:
 	return result;
 }
 
+static int stepper_set_target_velocity_instant(struct stepper_device *stepdev, int vel)
+{
+	int result = 0;
+	struct stepper_ops *ops = &stepdev->ops;
+	result = stepper_validate_velocity(stepdev, vel);
+	if (0 != result) {
+		goto out;
+	}
+	mutex_lock(&stepdev->velocity_mutex);
+	stepdev->velocity_target = vel;
+	if (stepdev->velocity_current == stepdev->velocity_target) {
+		goto out_mutex;
+	}
+	cancel_delayed_work_sync(&stepdev->velocity_dwork);
+	stepdev->velocity_shifting = false;
+	stepdev->velocity_current = vel;
+	ops->set_velocity(&stepdev->dev, stepdev->velocity_current);
+out_mutex:
+	mutex_unlock(&stepdev->velocity_mutex);
+out:
+	return result;
+}
+
 /* velocity_current */
 static ssize_t velocity_current_show(
 	struct device *dev,
@@ -120,6 +143,25 @@ static ssize_t velocity_target_store(
 }
 DEVICE_ATTR(velocity_target, S_IRUGO | S_IWUSR, velocity_target_show, velocity_target_store);
 
+/* velocity_target_instant */
+static ssize_t velocity_target_instant_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	int value;
+	int result = kstrtoint(buf, 0, &value);
+	struct stepper_device *stepdev = to_stepper_device(dev);
+	if (0 != result)
+		return result;
+	result = stepper_set_target_velocity_instant(stepdev, value);
+	if (0 != result)
+		return result;
+	return count;
+}
+DEVICE_ATTR(velocity_target_instant, S_IWUSR, NULL, velocity_target_instant_store);
+
 /* velocity_min */
 static ssize_t velocity_min_show(
 	struct device *dev,
@@ -146,6 +188,7 @@ DEVICE_ATTR(velocity_max, S_IRUGO, velocity_max_show, NULL);
 static struct attribute *attrs[] = {
 	&dev_attr_velocity_current.attr,
 	&dev_attr_velocity_target.attr,
+	&dev_attr_velocity_target_instant.attr,
 	&dev_attr_velocity_min.attr,
 	&dev_attr_velocity_max.attr,
 	NULL,
