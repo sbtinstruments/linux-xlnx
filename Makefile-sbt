@@ -20,15 +20,15 @@ $(modules): .config
 	$(makecmd) ARCH=arm green_mango_defconfig
 
 .PHONY: install-remote
-install-remote: remote_host_defined arch/arm/boot/uImage
-	@echo "Installing to $(remote_host)..."
-	ssh $(remote_host) "mount -o rw,remount \$$(readlink /media/system)"
-	scp arch/arm/boot/uImage $(remote_host):/boot/uImage
-	ssh $(remote_host) "mount -o ro,remount \$$(readlink /media/system)"
-	@echo "Successfully installed to $(remote_host)."
+install-remote: REMOTE_HOST_defined arch/arm/boot/uImage
+	@echo "Installing to $(REMOTE_HOST)..."
+	ssh $(REMOTE_HOST) "mount -o rw,remount \$$(readlink /media/active_system)"
+	scp arch/arm/boot/uImage $(REMOTE_HOST):/boot/uImage
+	ssh $(REMOTE_HOST) "mount -o ro,remount \$$(readlink /media/active_system)"
+	@echo "Successfully installed to $(REMOTE_HOST)."
 
-.PHONY: remote_host_defined
-remote_host_defined:
-ifndef remote_host
-	$(error remote_host is not set)
+.PHONY: REMOTE_HOST_defined
+REMOTE_HOST_defined:
+ifndef REMOTE_HOST
+	$(error REMOTE_HOST is not set)
 endif
