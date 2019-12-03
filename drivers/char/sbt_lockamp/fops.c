@@ -91,7 +91,7 @@ static u64 sleep_until_fifo_half_full(struct lockamp *lockamp)
 	/* Profile end */
 	getnstimeofday(&ts);
 	after_sleep_ns = timespec_to_ns(&ts);
-	/* Teturn actual sleep duration */
+	/* Return actual sleep duration */
 	return after_sleep_ns - before_sleep_ns;
 }
 
