@@ -107,183 +107,287 @@ static ssize_t signal_buf_capacity_show(
 }
 DEVICE_ATTR(signal_buf_capacity, S_IRUGO, signal_buf_capacity_show, NULL);
 
-/* generator_scale_min */
-static ssize_t generator_scale_min_show(
+/* gen_scale_min */
+static ssize_t gen_scale_min_show(
 	struct device *device,
 	struct device_attribute *attr,
 	char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", LOCKAMP_GENERATOR_SCALE_MIN);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", LOCKAMP_GEN_SCALE_MIN);
 }
-DEVICE_ATTR(generator_scale_min, S_IRUGO, generator_scale_min_show, NULL);
+DEVICE_ATTR(gen_scale_min, S_IRUGO, gen_scale_min_show, NULL);
 
-/* generator_scale_max */
-static ssize_t generator_scale_max_show(
+/* gen_scale_max */
+static ssize_t gen_scale_max_show(
 	struct device *device,
 	struct device_attribute *attr,
 	char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%d\n", LOCKAMP_GENERATOR_SCALE_MAX);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", LOCKAMP_GEN_SCALE_MAX);
 }
-DEVICE_ATTR(generator_scale_max, S_IRUGO, generator_scale_max_show, NULL);
+DEVICE_ATTR(gen_scale_max, S_IRUGO, gen_scale_max_show, NULL);
 
-/* generator1_scale */
-static ssize_t generator1_scale_show(
-	struct device *device,
-	struct device_attribute *attr,
-	char *buf)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	u32 value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	value = lockamp_get_generator1_scale(lockamp);
-	lockamp_pm_put(lockamp);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
-}
-static ssize_t generator1_scale_store(
-	struct device *device,
-	struct device_attribute *attr,
-	const char *buf,
-	size_t count)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	u32 value;
-	int result = kstrtos32(buf, 0, &value);
-	if (0 != result) {
-		return result;
-	}
-	result = lockamp_adjust_generator_scale(&value);
-	if (0 != result) {
-		return result;
-	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	lockamp_set_generator1_scale(lockamp, value);
-	lockamp_pm_put(lockamp);
-	return count;
-}
-DEVICE_ATTR(generator1_scale, S_IRUGO | S_IWUSR, generator1_scale_show, generator1_scale_store);
+/* generator scale */
+#define DEVICE_ATTR_GEN_SCALE(_name, _gen_control) \
+	static ssize_t _name##_scale_show( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		char *buf) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		value = lockamp_get_gen_scale(lockamp, &(_gen_control)); \
+		lockamp_pm_put(lockamp); \
+		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
+	} \
+	static ssize_t _name##_scale_store( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		const char *buf, \
+		size_t count) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = kstrtos32(buf, 0, &value); \
+		if (0 != result) { \
+			return result; \
+		} \
+		result = lockamp_adjust_gen_scale(&value); \
+		if (0 != result) { \
+			return result; \
+		} \
+		result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		lockamp_set_gen_scale(lockamp, &(_gen_control), value); \
+		lockamp_pm_put(lockamp); \
+		return count; \
+	} \
+	DEVICE_ATTR(_name##_scale, S_IRUGO | S_IWUSR, _name##_scale_show, _name##_scale_store);
 
-/* generator2_scale */
-static ssize_t generator2_scale_show(
-	struct device *device,
-	struct device_attribute *attr,
-	char *buf)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	int value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	value = lockamp_get_generator2_scale(lockamp);
-	lockamp_pm_put(lockamp);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
-}
-static ssize_t generator2_scale_store(
-	struct device *device,
-	struct device_attribute *attr,
-	const char *buf,
-	size_t count)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	s32 value;
-	int result = kstrtos32(buf, 0, &value);
-	if (0 != result)
-		return result;
-	result = lockamp_adjust_generator_scale(&value);
-	if (0 != result)
-		return result;
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	lockamp_set_generator2_scale(lockamp, value);
-	lockamp_pm_put(lockamp);
-	return count;
-}
-DEVICE_ATTR(generator2_scale, S_IRUGO | S_IWUSR, generator2_scale_show, generator2_scale_store);
+DEVICE_ATTR_GEN_SCALE(gen1, LOCKAMP_GEN1_CONTROL);
+DEVICE_ATTR_GEN_SCALE(gen2, LOCKAMP_GEN2_CONTROL);
 
-/* generator1_step */
-static ssize_t generator1_step_show(
-	struct device *device,
-	struct device_attribute *attr,
-	char *buf)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	int value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	value = lockamp_get_generator1_step(lockamp);
-	lockamp_pm_put(lockamp);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
-}
-static ssize_t generator1_step_store(
-	struct device *device,
-	struct device_attribute *attr,
-	const char *buf,
-	size_t count)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	u32 value;
-	int result = kstrtou32(buf, 0, &value);
-	if (0 != result) {
-		return result;
-	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	lockamp_set_generator1_step(lockamp, value);
-	lockamp_pm_put(lockamp);
-	return count;
-}
-DEVICE_ATTR(generator1_step, S_IRUGO | S_IWUSR, generator1_step_show, generator1_step_store);
+/* generator step int */
+#define DEVICE_ATTR_GEN_STEP_INT(_name, _gen_control) \
+	static ssize_t _name##_step_int_show( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		char *buf) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		value = lockamp_get_gen_step_int(lockamp, &(_gen_control)); \
+		lockamp_pm_put(lockamp); \
+		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
+	} \
+	static ssize_t _name##_step_int_store( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		const char *buf, \
+		size_t count) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = kstrtou32(buf, 0, &value); \
+		if (0 != result) { \
+			return result; \
+		} \
+		result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		lockamp_set_gen_step_int(lockamp, &(_gen_control), value); \
+		lockamp_pm_put(lockamp); \
+		return count; \
+	} \
+	DEVICE_ATTR(_name##_step_int, S_IRUGO | S_IWUSR, _name##_step_int_show, _name##_step_int_store);
 
-/* generator2_step */
-static ssize_t generator2_step_show(
-	struct device *device,
-	struct device_attribute *attr,
-	char *buf)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	int value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	value = lockamp_get_generator2_step(lockamp);
-	lockamp_pm_put(lockamp);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
-}
-static ssize_t generator2_step_store(
-	struct device *device,
-	struct device_attribute *attr,
-	const char *buf,
-	size_t count)
-{
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	s32 value;
-	int result = kstrtou32(buf, 0, &value);
-	if (0 != result) {
-		return result;
-	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
-	}
-	lockamp_set_generator2_step(lockamp, value);
-	lockamp_pm_put(lockamp);
-	return count;
-}
-DEVICE_ATTR(generator2_step, S_IRUGO | S_IWUSR, generator2_step_show, generator2_step_store);
+DEVICE_ATTR_GEN_STEP_INT(gen1, LOCKAMP_GEN1_CONTROL);
+DEVICE_ATTR_GEN_STEP_INT(gen2, LOCKAMP_GEN2_CONTROL);
+
+/* generator step frac */
+#define DEVICE_ATTR_GEN_STEP_FRAC(_name, _gen_control) \
+	static ssize_t _name##_step_frac_show( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		char *buf) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u16 value; \
+		int result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		value = lockamp_get_gen_step_frac(lockamp, &(_gen_control)); \
+		lockamp_pm_put(lockamp); \
+		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
+	} \
+	static ssize_t _name##_step_frac_store( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		const char *buf, \
+		size_t count) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u16 value; \
+		int result = kstrtou16(buf, 0, &value); \
+		if (0 != result) { \
+			return result; \
+		} \
+		result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		lockamp_set_gen_step_frac(lockamp, &(_gen_control), value); \
+		lockamp_pm_put(lockamp); \
+		return count; \
+	} \
+	DEVICE_ATTR(_name##_step_frac, S_IRUGO | S_IWUSR, _name##_step_frac_show, _name##_step_frac_store);
+
+DEVICE_ATTR_GEN_STEP_FRAC(gen1, LOCKAMP_GEN1_CONTROL);
+DEVICE_ATTR_GEN_STEP_FRAC(gen2, LOCKAMP_GEN2_CONTROL);
+
+/* generator lock phase */
+#define DEVICE_ATTR_GEN_LOCK_PHASE(_name, _gen_control) \
+	static ssize_t _name##_lock_phase_show( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		char *buf) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		value = lockamp_get_gen_lock_phase(lockamp, &(_gen_control)); \
+		lockamp_pm_put(lockamp); \
+		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
+	} \
+	static ssize_t _name##_lock_phase_store( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		const char *buf, \
+		size_t count) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = kstrtou32(buf, 0, &value); \
+		if (0 != result) { \
+			return result; \
+		} \
+		result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		lockamp_set_gen_lock_phase(lockamp, &(_gen_control), value); \
+		lockamp_pm_put(lockamp); \
+		return count; \
+	} \
+	DEVICE_ATTR(_name##_lock_phase, S_IRUGO | S_IWUSR, _name##_lock_phase_show, _name##_lock_phase_store);
+
+DEVICE_ATTR_GEN_LOCK_PHASE(gen1, LOCKAMP_GEN1_CONTROL);
+DEVICE_ATTR_GEN_LOCK_PHASE(gen2, LOCKAMP_GEN2_CONTROL);
+
+/* filter length */
+#define DEVICE_ATTR_FILTER_LENGTH(_name, _val_min, _val_max) \
+	static ssize_t _name##_length_show( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		char *buf) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		value = lockamp_get_##_name##_length(lockamp); \
+		lockamp_pm_put(lockamp); \
+		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
+	} \
+	static ssize_t _name##_length_store( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		const char *buf, \
+		size_t count) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = kstrtou32(buf, 0, &value); \
+		if (0 != result) { \
+			return result; \
+		} \
+		if ((_val_min) > value || value > (_val_max)) { \
+			return -ERANGE; \
+		} \
+		result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		lockamp_set_##_name##_length(lockamp, value); \
+		lockamp_pm_put(lockamp); \
+		return count; \
+	} \
+	DEVICE_ATTR(_name##_length, S_IRUGO | S_IWUSR, _name##_length_show, _name##_length_store);
+
+DEVICE_ATTR_FILTER_LENGTH(ma, 2, 255);
+DEVICE_ATTR_FILTER_LENGTH(cic, 2, 4095);
+
+/* filter scale */
+#define DEVICE_ATTR_FILTER_SCALE(_name, _val_min, _val_max) \
+	static ssize_t _name##_scale_show( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		char *buf) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		value = lockamp_get_##_name##_scale(lockamp); \
+		lockamp_pm_put(lockamp); \
+		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
+	} \
+	static ssize_t _name##_scale_store( \
+		struct device *device, \
+		struct device_attribute *attr, \
+		const char *buf, \
+		size_t count) \
+	{ \
+		struct lockamp *lockamp = dev_get_drvdata(device); \
+		u32 value; \
+		int result = kstrtou32(buf, 0, &value); \
+		if (0 != result) { \
+			return result; \
+		} \
+		if ((_val_min) > value || value > (_val_max)) { \
+			return -ERANGE; \
+		} \
+		result = lockamp_pm_get(lockamp); \
+		if (result < 0) { \
+			return result; \
+		} \
+		lockamp_set_##_name##_scale(lockamp, value); \
+		lockamp_pm_put(lockamp); \
+		return count; \
+	} \
+	DEVICE_ATTR(_name##_scale, S_IRUGO | S_IWUSR, _name##_scale_show, _name##_scale_store);
+
+DEVICE_ATTR_FILTER_SCALE(ma, 1, 7);
+DEVICE_ATTR_FILTER_SCALE(cic, 1, 63);
 
 /* dac_data_bits */
 static ssize_t dac_data_bits_show(
@@ -642,12 +746,20 @@ static struct attribute *attrs[] = {
 	&dev_attr_signal_buf_capacity.attr,
 	&dev_attr_signal_max_amplitude_e1.attr.attr,
 	&dev_attr_ma_time_step_ns.attr.attr,
-	&dev_attr_generator_scale_min.attr,
-	&dev_attr_generator_scale_max.attr,
-	&dev_attr_generator1_scale.attr,
-	&dev_attr_generator2_scale.attr,
-	&dev_attr_generator1_step.attr,
-	&dev_attr_generator2_step.attr,
+	&dev_attr_gen_scale_min.attr,
+	&dev_attr_gen_scale_max.attr,
+	&dev_attr_gen1_scale.attr,
+	&dev_attr_gen2_scale.attr,
+	&dev_attr_gen1_step_int.attr,
+	&dev_attr_gen2_step_int.attr,
+	&dev_attr_gen1_step_frac.attr,
+	&dev_attr_gen2_step_frac.attr,
+	&dev_attr_gen1_lock_phase.attr,
+	&dev_attr_gen2_lock_phase.attr,
+	&dev_attr_ma_length.attr,
+	&dev_attr_cic_length.attr,
+	&dev_attr_ma_scale.attr,
+	&dev_attr_cic_scale.attr,
 	&dev_attr_dac_data_bits.attr,
 	&dev_attr_hw_debug1.attr,
 	&dev_attr_fir_filter.attr,

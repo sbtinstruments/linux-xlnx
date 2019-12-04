@@ -13,28 +13,50 @@
 #include "lockin_amplifier.h"
 
 #define LOCKAMP_REG_VERSION         0x000
-#define LOCKAMP_REG_FIFO_SIZE       0x001
-#define LOCKAMP_REG_FIFO_DATA       0x002
-#define LOCKAMP_REG_GEN1_SCALE      0x003
-#define LOCKAMP_REG_GEN2_SCALE      0x00E
-#define LOCKAMP_REG_ADC_BUFFER      0x004
-/* Registers 0x005, 0x006, and 0x007 are deprecated */
-#define LOCKAMP_REG_GEN1_STEP       0x008
-#define LOCKAMP_REG_GEN2_STEP       0x009
-#define LOCKAMP_REG_DAC_DATA_BITS   0x00A
-#define LOCKAMP_REG_HB_FILTERS      0x00B
-#define LOCKAMP_REG_FIR_CYCLES      0x00C
-#define LOCKAMP_REG_CONFIG_CONTROL  0x00D
-#define LOCKAMP_REG_DEBUG0          0x020
-#define LOCKAMP_REG_DEBUG_CONTROL   0x021
-#define LOCKAMP_REG_FIR_COEF_BASE   0x200
+#define LOCKAMP_REG_FIFO_SIZE       0x004
+#define LOCKAMP_REG_FIFO_DATA       0x008
+#define LOCKAMP_REG_GEN1_SCALE      0x00C
+#define LOCKAMP_REG_GEN2_SCALE      0x038 /* Note the jump in address */
+#define LOCKAMP_REG_ADC_BUFFER      0x010
+/* Registers 0x014 to 0x027 (both inclusive) are deprecated */
+#define LOCKAMP_REG_DAC_DATA_BITS   0x028
+#define LOCKAMP_REG_HB_FILTERS      0x02C
+#define LOCKAMP_REG_FIR_CYCLES      0x030
+#define LOCKAMP_REG_CONFIG_CONTROL  0x034
+
+#define LOCKAMP_REG_MA_LENGTH       0x040
+#define LOCKAMP_REG_CIC_LENGTH      0x044
+#define LOCKAMP_REG_MA_SCALE        0x048
+#define LOCKAMP_REG_CIC_SCALE       0x04C
+#define LOCKAMP_REG_GEN1_STEP_INT   0x050
+#define LOCKAMP_REG_GEN1_STEP_FRAC  0x054
+#define LOCKAMP_REG_GEN1_LOCK_PHASE 0x058 /* 16 bit register */
+#define LOCKAMP_REG_GEN2_STEP_INT   0x060
+#define LOCKAMP_REG_GEN2_STEP_FRAC  0x064
+#define LOCKAMP_REG_GEN2_LOCK_PHASE 0x068 /* 16 bit register */
+
+#define LOCKAMP_REG_DEBUG0          0x080
+#define LOCKAMP_REG_DEBUG_CONTROL   0x084
+
+#define LOCKAMP_REG_FIR_COEF_BASE   0x800
 
 /* Note that the time step is exact. That is, it has no fractional part
  * which is why it can be safely stored in an integer. */
 #define LOCKAMP_BASE_TIME_STEP      2728
-#define LOCKAMP_GENERATOR_SCALE_MIN 0
+#define LOCKAMP_GEN_SCALE_MIN 0
 /* s18 max */
-#define LOCKAMP_GENERATOR_SCALE_MAX 131071
+#define LOCKAMP_GEN_SCALE_MAX 131071
+
+struct lockamp_gen_control
+{
+	u8 scale;
+	u8 step_int;
+	u8 step_frac;
+	u8 lock_phase;
+};
+
+extern struct lockamp_gen_control LOCKAMP_GEN1_CONTROL;
+extern struct lockamp_gen_control LOCKAMP_GEN2_CONTROL;
 
 static inline u32 lockamp_version(struct lockamp *lockamp)
 {
@@ -57,11 +79,10 @@ static inline u32 lockamp_fifo_size_n(struct lockamp *lockamp)
 	return lockamp_fifo_size_s32(lockamp) / LOCKAMP_ENTRIES_PER_SAMPLE;
 }
 
-static inline int lockamp_adjust_generator_scale(s32* scale)
+static inline int lockamp_adjust_gen_scale(s32* scale)
 {
 	static const s32 sensitivity_threshold = 42;
-	if (LOCKAMP_GENERATOR_SCALE_MIN > *scale
-	                                  || LOCKAMP_GENERATOR_SCALE_MAX < *scale) {
+	if (LOCKAMP_GEN_SCALE_MIN > *scale || LOCKAMP_GEN_SCALE_MAX < *scale) {
 		return -ERANGE;
 	}
 	/*
@@ -75,44 +96,84 @@ static inline int lockamp_adjust_generator_scale(s32* scale)
 	return 0;
 }
 
-static inline s32 lockamp_get_generator1_scale(struct lockamp *lockamp)
+static inline s32 lockamp_get_gen_scale(struct lockamp *lockamp, struct lockamp_gen_control *gen)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_GEN1_SCALE) >> 14;
+	return ioread32(lockamp->control + gen->scale) >> 14; /* Only 18 MSB are used */
 }
 
-static inline void lockamp_set_generator1_scale(struct lockamp *lockamp, s32 scale)
+static inline void lockamp_set_gen_scale(struct lockamp *lockamp, struct lockamp_gen_control *gen, u32 value)
 {
-	iowrite32(scale << 14, lockamp->control + LOCKAMP_REG_GEN1_SCALE);
+	iowrite32(value << 14, lockamp->control + gen->scale); /* Only 18 MSB are used */
 }
 
-static inline s32 lockamp_get_generator2_scale(struct lockamp *lockamp)
+static inline u32 lockamp_get_gen_step_int(struct lockamp *lockamp, struct lockamp_gen_control *gen)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_GEN2_SCALE) >> 14;
+	return ioread32(lockamp->control + gen->step_int);
 }
 
-static inline void lockamp_set_generator2_scale(struct lockamp *lockamp, s32 scale)
+static inline void lockamp_set_gen_step_int(struct lockamp *lockamp, struct lockamp_gen_control *gen, u32 value)
 {
-	iowrite32(scale << 14, lockamp->control + LOCKAMP_REG_GEN2_SCALE);
+	iowrite32(value, lockamp->control + gen->step_int);
 }
 
-static inline u32 lockamp_get_generator1_step(struct lockamp *lockamp)
+static inline u16 lockamp_get_gen_step_frac(struct lockamp *lockamp, struct lockamp_gen_control *gen)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_GEN1_STEP);
+	return ioread16(lockamp->control + gen->step_frac);
 }
 
-static inline void lockamp_set_generator1_step(struct lockamp *lockamp, u32 value)
+static inline void lockamp_set_gen_step_frac(struct lockamp *lockamp, struct lockamp_gen_control *gen, u16 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_GEN1_STEP);
+	iowrite16(value, lockamp->control + gen->step_frac);
 }
 
-static inline u32 lockamp_get_generator2_step(struct lockamp *lockamp)
+static inline u32 lockamp_get_gen_lock_phase(struct lockamp *lockamp, struct lockamp_gen_control *gen)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_GEN2_STEP);
+	return ioread32(lockamp->control + gen->lock_phase);
 }
 
-static inline void lockamp_set_generator2_step(struct lockamp *lockamp, u32 value)
+static inline void lockamp_set_gen_lock_phase(struct lockamp *lockamp, struct lockamp_gen_control *gen, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_GEN2_STEP);
+	iowrite32(value, lockamp->control + gen->lock_phase);
+}
+
+static inline u32 lockamp_get_ma_length(struct lockamp *lockamp)
+{
+	return ioread32(lockamp->control + LOCKAMP_REG_MA_LENGTH);
+}
+
+static inline void lockamp_set_ma_length(struct lockamp *lockamp, u32 value)
+{
+	iowrite32(value, lockamp->control + LOCKAMP_REG_MA_LENGTH);
+}
+
+static inline u32 lockamp_get_ma_scale(struct lockamp *lockamp)
+{
+	return ioread32(lockamp->control + LOCKAMP_REG_MA_SCALE);
+}
+
+static inline void lockamp_set_ma_scale(struct lockamp *lockamp, u32 value)
+{
+	iowrite32(value, lockamp->control + LOCKAMP_REG_MA_SCALE);
+}
+
+static inline u32 lockamp_get_cic_length(struct lockamp *lockamp)
+{
+	return ioread32(lockamp->control + LOCKAMP_REG_CIC_LENGTH);
+}
+
+static inline void lockamp_set_cic_length(struct lockamp *lockamp, u32 value)
+{
+	iowrite32(value, lockamp->control + LOCKAMP_REG_CIC_LENGTH);
+}
+
+static inline u32 lockamp_get_cic_scale(struct lockamp *lockamp)
+{
+	return ioread32(lockamp->control + LOCKAMP_REG_CIC_SCALE);
+}
+
+static inline void lockamp_set_cic_scale(struct lockamp *lockamp, u32 value)
+{
+	iowrite32(value, lockamp->control + LOCKAMP_REG_CIC_SCALE);
 }
 
 static inline u32 lockamp_get_dac_data_bits(struct lockamp *lockamp)

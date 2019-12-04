@@ -11,6 +11,20 @@
 
 #include "hw.h"
 
+struct lockamp_gen_control LOCKAMP_GEN1_CONTROL = {
+	.scale = LOCKAMP_REG_GEN1_SCALE,
+	.step_int = LOCKAMP_REG_GEN1_STEP_INT,
+	.step_frac = LOCKAMP_REG_GEN1_STEP_FRAC,
+	.lock_phase = LOCKAMP_REG_GEN1_LOCK_PHASE,
+};
+
+struct lockamp_gen_control LOCKAMP_GEN2_CONTROL = {
+	.scale = LOCKAMP_REG_GEN2_SCALE,
+	.step_int = LOCKAMP_REG_GEN2_STEP_INT,
+	.step_frac = LOCKAMP_REG_GEN2_STEP_FRAC,
+	.lock_phase = LOCKAMP_REG_GEN2_LOCK_PHASE,
+};
+
 int lockamp_set_decimation(struct lockamp *lockamp, u32 value)
 {
 	u32 hb_filters;
@@ -57,7 +71,7 @@ void lockamp_set_filter_coefficients(struct lockamp *lockamp, const s32 *coefs)
 {
 	size_t i;
 	for (i = 0; LOCKAMP_FIR_COEF_LEN > i; ++i) {
-		iowrite32(coefs[i], lockamp->control + LOCKAMP_REG_FIR_COEF_BASE + i);
+		iowrite32(coefs[i], lockamp->control + LOCKAMP_REG_FIR_COEF_BASE + i * 4);
 	}
 }
 
