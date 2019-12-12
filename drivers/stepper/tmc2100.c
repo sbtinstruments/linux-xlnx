@@ -9,8 +9,9 @@
 #include <linux/pwm.h>
 #include <linux/stepper.h>
 
-#define TMC2100_VOLTAGE_MAX 3300
-#define TMC2100_CFG_SIZE 6 /* Doesn't include cfg6_enn */
+#define TMC2100_REF_VOLTAGE_PHYSICAL_MAX 3300  /* As far as the regulator goes */
+#define TMC2100_REF_VOLTAGE_LOGICAL_MAX 2500   /* As far as the TMC2100 goes */
+#define TMC2100_CFG_SIZE 6                     /* Doesn't include cfg6_enn */
 
 struct tmc2100 {
 	struct gpio_desc *cfg[TMC2100_CFG_SIZE];
@@ -26,6 +27,7 @@ enum tmc2100_cfg_state {
 
 struct tmc2100_state {
 	enum tmc2100_cfg_state cfg[TMC2100_CFG_SIZE];
+	unsigned int ref_voltage;
 };
 
 static struct stepper_vel_cfg tmc2100_cfg = {
@@ -69,6 +71,9 @@ static struct tmc2100_state tmc2100_default_state = {
 		 */
 		TMC2100_VCC_IO,
 	},
+	/* Reference voltage should not be lower than about 0.5V to 1.0V.
+	 * The maximum voltage is 2.5V. */
+	.ref_voltage = 2500,
 };
 
 static void tmc2100_set_cfg(struct tmc2100 *tmc, int idx, enum tmc2100_cfg_state value)
@@ -92,28 +97,29 @@ static void tmc2100_set_cfg(struct tmc2100 *tmc, int idx, enum tmc2100_cfg_state
 	};
 }
 
+/**
+ * @voltage_mv voltage in mV between 0 and TMC2100_REF_VOLTAGE_PHYSICAL_MAX
+ */
+static int tmc2100_set_ref_voltage(struct tmc2100 *tmc, unsigned int voltage_mv)
+{
+	int err;
+	struct pwm_state state;
+	pwm_get_state(tmc->ref, &state);
+	err = pwm_set_relative_duty_cycle(&state, voltage_mv, TMC2100_REF_VOLTAGE_PHYSICAL_MAX);
+	if (err) {
+		return err;
+	}
+	pwm_apply_state(tmc->ref, &state);
+	return 0;
+}
+
 static void tmc2100_apply_state(struct tmc2100 *tmc, struct tmc2100_state *state)
 {
 	int i;
 	for (i = 0; TMC2100_CFG_SIZE > i; ++i) {
 		tmc2100_set_cfg(tmc, i, state->cfg[i]);
 	}
-}
-
-/**
- * @voltage_mv voltage in mV between 0 and TMC2100_VOLTAGE_MAX
- */
-static int tmc2100_set_ref_voltage(struct tmc2100 *tmc, int voltage_mv)
-{
-	int err;
-	struct pwm_state state;
-	pwm_get_state(tmc->ref, &state);
-	err = pwm_set_relative_duty_cycle(&state, voltage_mv, TMC2100_VOLTAGE_MAX);
-	if (err) {
-		return err;
-	}
-	pwm_apply_state(tmc->ref, &state);
-	return 0;
+	tmc2100_set_ref_voltage(tmc, state->ref_voltage);
 }
 
 /**
@@ -250,7 +256,6 @@ static int tmc2100_init(struct tmc2100 *tmc, struct platform_device *pdev)
 	}
 	gpiod_set_value(tmc->cfg6_enn, 0);
 	tmc2100_init_pwms(tmc);
-	tmc2100_set_ref_voltage(tmc, 2500); /* 2.5 V */
 	return 0;
 }
 
@@ -262,6 +267,7 @@ static int tmc2100_of_get_state(struct device *dev, struct tmc2100_state *state)
 	char cfg_str[5];
 	const char *cfg_value;
 	enum tmc2100_cfg_state cfg_state;
+	u32 ref_voltage;
 
 	if (NULL == of_node) {
 		return result;
@@ -279,11 +285,20 @@ static int tmc2100_of_get_state(struct device *dev, struct tmc2100_state *state)
 		} else if (0 == strcmp(cfg_value, "open")) {
 			cfg_state = TMC2100_OPEN;
 		} else {
-			dev_warn(dev, "Invalid %s state: %s. Skipping.\n",
+			dev_warn(dev, "Invalid %s state: %s. Using default.\n",
 			         cfg_str, cfg_value);
 			continue;
 		}
 		state->cfg[i] = cfg_state;
+	}
+
+	result = of_property_read_u32(of_node, "ref-voltage", &ref_voltage);
+	if (result || TMC2100_REF_VOLTAGE_LOGICAL_MAX < ref_voltage) {
+		dev_warn(dev, "Invalid ref_voltage: %d. Can be at most %d. Using default.\n",
+		         ref_voltage, TMC2100_REF_VOLTAGE_LOGICAL_MAX);
+		result = 0; /* Ignore the error since we are simply using the default */
+	} else {
+		state->ref_voltage = ref_voltage;
 	}
 
 	return result;
