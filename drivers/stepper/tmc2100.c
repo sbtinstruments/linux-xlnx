@@ -7,16 +7,18 @@
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
+#include <linux/regulator/consumer.h>
 #include <linux/stepper.h>
 
-#define TMC2100_REF_VOLTAGE_PHYSICAL_MAX 3300  /* As far as the regulator goes */
-#define TMC2100_REF_VOLTAGE_LOGICAL_MAX 2500   /* As far as the TMC2100 goes */
-#define TMC2100_CFG_SIZE 6                     /* Doesn't include cfg6_enn */
+#define TMC2100_REF_VOLTAGE_LOGICAL_MIN  500
+#define TMC2100_REF_VOLTAGE_LOGICAL_MAX 2500
+#define TMC2100_CFG_SIZE 6 /* Doesn't include cfg6_enn */
 
 struct tmc2100 {
 	struct gpio_desc *cfg[TMC2100_CFG_SIZE];
 	struct gpio_desc *cfg6_enn, *dir, *index, *error;
-	struct pwm_device *ref, *step;
+	struct pwm_device *step;
+	struct regulator *ref;
 };
 
 enum tmc2100_cfg_state {
@@ -27,7 +29,7 @@ enum tmc2100_cfg_state {
 
 struct tmc2100_state {
 	enum tmc2100_cfg_state cfg[TMC2100_CFG_SIZE];
-	unsigned int ref_voltage;
+	unsigned int ref_voltage; /* mV */
 };
 
 static struct stepper_vel_cfg tmc2100_cfg = {
@@ -97,29 +99,20 @@ static void tmc2100_set_cfg(struct tmc2100 *tmc, int idx, enum tmc2100_cfg_state
 	};
 }
 
-/**
- * @voltage_mv voltage in mV between 0 and TMC2100_REF_VOLTAGE_PHYSICAL_MAX
- */
-static int tmc2100_set_ref_voltage(struct tmc2100 *tmc, unsigned int voltage_mv)
+static int tmc2100_apply_state(struct tmc2100 *tmc, struct tmc2100_state *state)
 {
-	int err;
-	struct pwm_state state;
-	pwm_get_state(tmc->ref, &state);
-	err = pwm_set_relative_duty_cycle(&state, voltage_mv, TMC2100_REF_VOLTAGE_PHYSICAL_MAX);
-	if (err) {
-		return err;
-	}
-	pwm_apply_state(tmc->ref, &state);
-	return 0;
-}
-
-static void tmc2100_apply_state(struct tmc2100 *tmc, struct tmc2100_state *state)
-{
+	int error;
 	int i;
+	int voltage_uv;
 	for (i = 0; TMC2100_CFG_SIZE > i; ++i) {
 		tmc2100_set_cfg(tmc, i, state->cfg[i]);
 	}
-	tmc2100_set_ref_voltage(tmc, state->ref_voltage);
+	voltage_uv = state->ref_voltage * 1000; /* mV to uV */
+	error = regulator_set_voltage(tmc->ref, voltage_uv, voltage_uv);
+	if (error) {
+		return error;
+	}
+	return 0;
 }
 
 /**
@@ -214,13 +207,6 @@ static int tmc2100_get_gpios(struct tmc2100 *tmc, struct platform_device *pdev)
 
 static int tmc2100_get_pwms(struct tmc2100 *tmc, struct platform_device *pdev)
 {
-	/* ref */
-	tmc->ref = devm_pwm_get(&pdev->dev, "ref");
-	if (IS_ERR(tmc->ref)) {
-		dev_err(&pdev->dev, "Failed to get ref PWM: %ld.\n",
-		        PTR_ERR(tmc->ref));
-		return PTR_ERR(tmc->ref);
-	}
 	/* step */
 	tmc->step = devm_pwm_get(&pdev->dev, "step");
 	if (IS_ERR(tmc->step)) {
@@ -231,16 +217,23 @@ static int tmc2100_get_pwms(struct tmc2100 *tmc, struct platform_device *pdev)
 	return 0;
 }
 
-static void tmc2100_init_pwms(struct tmc2100 *tmc)
+static int tmc2100_get_regulators(struct tmc2100 *tmc, struct platform_device *pdev)
 {
-	struct pwm_state ref_state;
+	/* ref */
+	tmc->ref = devm_regulator_get(&pdev->dev, "ref");
+	if (IS_ERR(tmc->ref)) {
+		dev_err(&pdev->dev, "Failed to get 'ref' regulator.\n");
+		return PTR_ERR(tmc->ref);
+	}
+	return 0;
+}
+
+static int tmc2100_init_pwms(struct tmc2100 *tmc)
+{
 	struct pwm_state step_state;
-	pwm_init_state(tmc->ref, &ref_state);
-	ref_state.enabled = true;
-	pwm_apply_state(tmc->ref, &ref_state);
 	pwm_init_state(tmc->step, &step_state);
 	step_state.enabled = false;
-	pwm_apply_state(tmc->step, &step_state);
+	return pwm_apply_state(tmc->step, &step_state);
 }
 
 static int tmc2100_init(struct tmc2100 *tmc, struct platform_device *pdev)
@@ -254,8 +247,21 @@ static int tmc2100_init(struct tmc2100 *tmc, struct platform_device *pdev)
 	if (err) {
 		return err;
 	}
+	err = tmc2100_get_regulators(tmc, pdev);
+	if (err) {
+		return err;
+	}
 	gpiod_set_value(tmc->cfg6_enn, 0);
-	tmc2100_init_pwms(tmc);
+	err = tmc2100_init_pwms(tmc);
+	if (err) {
+		dev_err(&pdev->dev, "Failed to initialize pwms: %d\n", err);
+		return err;
+	}
+	err = regulator_enable(tmc->ref);
+	if (err) {
+		dev_err(&pdev->dev, "Failed to enable regulator 'ref': %d\n", err);
+		return err;
+	}
 	return 0;
 }
 
@@ -293,12 +299,20 @@ static int tmc2100_of_get_state(struct device *dev, struct tmc2100_state *state)
 	}
 
 	result = of_property_read_u32(of_node, "ref-voltage", &ref_voltage);
-	if (result || TMC2100_REF_VOLTAGE_LOGICAL_MAX < ref_voltage) {
-		dev_warn(dev, "Invalid ref_voltage: %d. Can be at most %d. Using default.\n",
-		         ref_voltage, TMC2100_REF_VOLTAGE_LOGICAL_MAX);
-		result = 0; /* Ignore the error since we are simply using the default */
+	if (result == -EINVAL) {
+		/* ref-voltage was not set in the device tree. Ignore. */
+		result = 0;
 	} else {
-		state->ref_voltage = ref_voltage;
+		/* the given ref-voltage is not within spec */
+		if (result || TMC2100_REF_VOLTAGE_LOGICAL_MAX < ref_voltage
+				|| TMC2100_REF_VOLTAGE_LOGICAL_MIN > ref_voltage) {
+			dev_warn(dev, "Invalid ref_voltage: %d. Must be between %d and %d. Using default.\n",
+		             ref_voltage, TMC2100_REF_VOLTAGE_LOGICAL_MIN,
+		             TMC2100_REF_VOLTAGE_LOGICAL_MAX);
+			result = 0; /* Ignore the error since we are simply using the default */
+		} else {
+			state->ref_voltage = ref_voltage;
+		}
 	}
 
 	return result;
@@ -328,7 +342,11 @@ static int tmc2100_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "Failed to get OF state.\n");
 		return result;
 	}
-	tmc2100_apply_state(tmc, &state);
+	result = tmc2100_apply_state(tmc, &state);
+	if (0 != result) {
+		dev_err(&pdev->dev, "Failed to apply state.\n");
+		return result;
+	}
 
 	classdev = devm_stepper_device_register(&pdev->dev, pdev->name, tmc,
 	                                        &tmc2100_ops, &tmc2100_cfg);
