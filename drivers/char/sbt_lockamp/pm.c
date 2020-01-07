@@ -7,7 +7,7 @@
 #include <linux/delay.h>
 #include <linux/iio/consumer.h>
 
-#include "lockin_amplifier.h"
+#include "hw.h"
 
 static int lockamp_pm_suspend(struct device *dev)
 {
@@ -99,6 +99,7 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 			return error;
 		}
 	}
+	lockamp_reset(lockamp);
 	dev_dbg(dev, "Success\n");
 	return 0;
 }

@@ -4,7 +4,6 @@
  *
  * Copyright (c) 2019, Frederik Peter Aalund <fpa@sbtinstruments.com>
  */
-#include <linux/delay.h>
 #include <linux/fs.h>
 #include <linux/gpio/consumer.h>
 #include <linux/iio/consumer.h>
@@ -121,9 +120,7 @@ static int lockamp_probe(struct platform_device *pdev)
 	}
 
 	/* Reset */
-	gpiod_set_value(lockamp->reset, 1);
-	msleep(1); /* Arbitrary */
-	gpiod_set_value(lockamp->reset, 0);
+	lockamp_reset(lockamp);
 
 	/* Init mutexes */
 	mutex_init(&lockamp->signal_buf_m);
