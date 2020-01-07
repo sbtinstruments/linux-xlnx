@@ -6,6 +6,8 @@
  */
 #include <asm/io.h>
 #include <linux/circ_buf.h>
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
 #include <linux/ioport.h>
 #include <linux/log2.h>
 
@@ -24,6 +26,13 @@ struct lockamp_gen_control LOCKAMP_GEN2_CONTROL = {
 	.step_frac = LOCKAMP_REG_GEN2_STEP_FRAC,
 	.lock_phase = LOCKAMP_REG_GEN2_LOCK_PHASE,
 };
+
+void lockamp_reset(struct lockamp *lockamp)
+{
+	gpiod_set_value(lockamp->reset, 1);
+	msleep(1); /* Arbitrary */
+	gpiod_set_value(lockamp->reset, 0);
+}
 
 int lockamp_set_decimation(struct lockamp *lockamp, u32 value)
 {
