@@ -468,6 +468,71 @@ static ssize_t hw_debug1_store(
 }
 DEVICE_ATTR(hw_debug1, S_IRUGO | S_IWUSR, hw_debug1_show, hw_debug1_store);
 
+/* hw_debug_control */
+static ssize_t hw_debug_control_show(
+	struct device *device,
+	struct device_attribute *attr,
+	char *buf)
+{
+	struct lockamp *lockamp = dev_get_drvdata(device);
+	int value;
+	int result = lockamp_pm_get(lockamp);
+	if (result < 0) {
+		return result;
+	}
+	value = lockamp_get_debug_control(lockamp);
+	lockamp_pm_put(lockamp);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
+}
+static ssize_t hw_debug_control_store(
+	struct device *device,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct lockamp *lockamp = dev_get_drvdata(device);
+	u32 value;
+	int result = kstrtou32(buf, 0, &value);
+	if (0 != result) {
+		return result;
+	}
+	result = lockamp_pm_get(lockamp);
+	if (result < 0) {
+		return result;
+	}
+	lockamp_set_debug_control(lockamp, value);
+	lockamp_pm_put(lockamp);
+	return count;
+}
+DEVICE_ATTR(hw_debug_control, S_IRUGO | S_IWUSR, hw_debug_control_show, hw_debug_control_store);
+
+/* reset_ma_filter */
+static ssize_t reset_ma_filter_store(
+	struct device *device,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	struct lockamp *lockamp = dev_get_drvdata(device);
+	bool value;
+	int result = kstrtobool(buf, &value);
+	if (0 != result) {
+		return result;
+	}
+	/* Only accept truthy values. E.g., "1" or "y". */
+	if (!value) {
+		return -EINVAL;
+	}
+	result = lockamp_pm_get(lockamp);
+	if (result < 0) {
+		return result;
+	}
+	lockamp_reset_ma_filter(lockamp);
+	lockamp_pm_put(lockamp);
+	return count;
+}
+DEVICE_ATTR(reset_ma_filter, S_IWUSR, NULL, reset_ma_filter_store);
+
 /* fir_filter */
 enum fir_filter {
 	NONE,
@@ -767,6 +832,8 @@ static struct attribute *attrs[] = {
 	&dev_attr_cic_scale.attr,
 	&dev_attr_dac_data_bits.attr,
 	&dev_attr_hw_debug1.attr,
+	&dev_attr_hw_debug_control.attr,
+	&dev_attr_reset_ma_filter.attr,
 	&dev_attr_fir_filter.attr,
 	&dev_attr_sample_multipliers.attr,
 	&dev_attr_fifo_read_duration_us.attr,
