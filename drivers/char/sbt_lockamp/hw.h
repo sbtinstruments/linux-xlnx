@@ -59,6 +59,8 @@ struct lockamp_gen_control
 extern struct lockamp_gen_control LOCKAMP_GEN1_CONTROL;
 extern struct lockamp_gen_control LOCKAMP_GEN2_CONTROL;
 
+void lockamp_reset(struct lockamp *lockamp);
+
 static inline u32 lockamp_version(struct lockamp *lockamp)
 {
 	return ioread32(lockamp->control + LOCKAMP_REG_VERSION);
