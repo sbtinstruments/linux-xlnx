@@ -36,10 +36,14 @@ int lockamp_debug1 = 0;
 int lockamp_debug2 = 0;
 int lockamp_debug3 = 0;
 
-struct task_struct *thread;
 static unsigned int open_count = 0;
+
+#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
+
+struct task_struct *thread = NULL;
 static u64 last_ma_time_ns = 0;
 static unsigned int ma_factor = 20;
+
 
 static int increase_task_priority(struct task_struct *t)
 {
@@ -124,6 +128,8 @@ static int fifo_to_sbuf(void *data)
 	return 0;
 }
 
+#endif
+
 static void reset_start_time(struct lockamp *lockamp)
 {
 	struct timespec ts;
@@ -147,6 +153,7 @@ static int device_open(struct inode *inode, struct file *file)
 	}
 	++open_count;
 
+#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
 	/* power */
 	result = lockamp_pm_get(lockamp);
 	if (result < 0) {
@@ -154,48 +161,60 @@ static int device_open(struct inode *inode, struct file *file)
 		goto out_open_count;
 	}
 
-	/* Thread */
+	/* start buffering thread if there is a signal buffer */
 	thread = kthread_create(fifo_to_sbuf, lockamp, "lockamp0");
 	if (IS_ERR(thread)) {
 		dev_alert(lockamp->dev, "Failed to create kthread.\n");
 		result = PTR_ERR(thread);
 		thread = NULL;
-        goto out_pm;
+		goto out_pm;
 	}
 	result = increase_task_priority(thread);
 	if (0 != result) {
 		goto out_thread;
 	}
 	wake_up_process(thread);
+#endif
+
 	/* Synchronization */
 	lockamp->last_desyncs = atomic_read(&lockamp->desyncs);
 	reset_start_time(lockamp);
 	/* Out */
 	result = 0;
 	goto out;
+
+#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
 out_thread:
-	kthread_stop(thread);
-	thread = NULL;
-out_open_count:
-	--open_count;
+	if (thread) {
+		kthread_stop(thread);
+		thread = NULL;
+	}
 out_pm:
 	lockamp_pm_put(lockamp);
+out_open_count:
+#endif
+
+	--open_count;
 out:
 	return result;
 }
 
 static int device_release(struct inode *inode, struct file *file)
 {
+#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
 	struct lockamp *lockamp;
 	lockamp = container_of(inode->i_cdev, struct lockamp, cdev);
 	if (thread) {
 		kthread_stop(thread);
 		thread = NULL;
 	}
-	--open_count;
 	lockamp_pm_put(lockamp);
+#endif
+	--open_count;
 	return 0;
 }
+
+#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
 
 static ssize_t pop_chunk_to_user(struct circ_sample_buf *cbuf,
                                  struct csbuf_snapshot *cbuf_snap,
@@ -287,6 +306,8 @@ static void reader_get_sbuf_snapshot(struct lockamp *lockamp,
 	}
 }
 
+#endif
+
 static void synchronize(struct lockamp *lockamp)
 {
 	if (atomic_read(&lockamp->desyncs) != lockamp->last_desyncs) {
@@ -303,10 +324,11 @@ static ssize_t device_read(
 	loff_t *offset)
 {
 	ssize_t result;
-	char *pos = buffer;
 	struct lockamp *lockamp = filp->private_data;
-	struct csbuf_snapshot sbuf_snap;
+#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
+	char *pos = buffer;
 	struct chunk_info info;
+	struct csbuf_snapshot sbuf_snap;
 	reader_get_sbuf_snapshot(lockamp, &sbuf_snap);
 	synchronize(lockamp);
 	result = chunk_get_info(lockamp, length, &sbuf_snap, &info);
@@ -332,6 +354,54 @@ static ssize_t device_read(
 	/* Effectuate the write */
 	chunk_commit_info(lockamp, &info);
 	return pos - buffer;
+#else
+	size_t fifo_size_n;
+	size_t buffer_size_n = length / sizeof(struct sample);
+	size_t bounded_size_n;
+	size_t bounded_size;
+	char *kbuf = NULL;
+	char *pos;
+	int i;
+	/* get power */
+	result = lockamp_pm_get(lockamp);
+	if (result < 0) {
+		dev_err(lockamp->dev, "Failed to get pm runtime: %d\n", result);
+		result = -EFAULT;
+		goto out;
+	}
+	/* bounds */
+	fifo_size_n = lockamp_fifo_size_n(lockamp);
+	bounded_size_n = min(fifo_size_n, buffer_size_n);
+	bounded_size = bounded_size_n * sizeof(struct sample);
+	/* allocate kernel memory */
+	kbuf = vmalloc(bounded_size);
+	if (NULL == kbuf) {
+		dev_err(lockamp->dev, "Failed to allocate kernel buffer.\n");
+		result = -ENOMEM;
+		goto out_pm;
+	}
+	/* copy from FIFO into kernel buffer */
+	synchronize(lockamp);
+	pos = kbuf;
+	for (i = 0; bounded_size_n != i; ++i) {
+		lockamp_fifo_pop_sample(lockamp, (struct sample*)pos);
+		pos += sizeof(struct sample);
+	}
+	/* copy from kernel space to user space */
+	if (0 != copy_to_user(buffer, kbuf, bounded_size)) {
+		dev_err(lockamp->dev, "Failed to copy memory to user space.\n");
+		result = -EFAULT;
+		goto out_kbuf;
+	}
+	result = bounded_size;
+	goto out_pm;
+out_kbuf:
+	vfree(kbuf);
+out_pm:
+	lockamp_pm_put(lockamp);
+out:
+	return result;
+#endif
 }
 
 static ssize_t device_write(struct file *filp, const char __user *buff,
