@@ -101,7 +101,7 @@ static int fifo_to_sbuf(void *data)
 	size_t size_n;
 	struct timespec ts;
 	u64 start, end;
-	/* Continously poll the FIFO */
+	/* Continuously poll the FIFO */
 	for (;;) {
 		if (kthread_should_stop()) {
 			break;

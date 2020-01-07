@@ -37,15 +37,16 @@
 
 #define LOCKAMP_REG_DEBUG0          0x080
 #define LOCKAMP_REG_DEBUG_CONTROL   0x084
+#define LOCKAMP_MA_RESET_BIT        BIT(1)
 
 #define LOCKAMP_REG_FIR_COEF_BASE   0x800
 
 /* Note that the time step is exact. That is, it has no fractional part
  * which is why it can be safely stored in an integer. */
 #define LOCKAMP_BASE_TIME_STEP      2728
-#define LOCKAMP_GEN_SCALE_MIN 0
+#define LOCKAMP_GEN_SCALE_MIN       0
 /* s18 max */
-#define LOCKAMP_GEN_SCALE_MAX 131071
+#define LOCKAMP_GEN_SCALE_MAX       131071
 
 struct lockamp_gen_control
 {
@@ -186,6 +187,16 @@ static inline void lockamp_set_dac_data_bits(struct lockamp *lockamp, u32 value)
 	iowrite32(value, lockamp->control + LOCKAMP_REG_DAC_DATA_BITS);
 }
 
+static inline s32 lockamp_get_debug_control(struct lockamp *lockamp)
+{
+	return ioread32(lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
+}
+
+static inline void lockamp_set_debug_control(struct lockamp *lockamp, u32 value)
+{
+	iowrite32(value, lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
+}
+
 static inline s32 lockamp_get_debug1(struct lockamp *lockamp)
 {
 	return ioread32(lockamp->control + LOCKAMP_REG_CONFIG_CONTROL);
@@ -223,6 +234,15 @@ static inline unsigned long lockamp_get_read_delay_ns(struct lockamp *lockamp)
 {
 	/* The time it takes to read half of the FIFO. */
 	return LOCKAMP_FIFO_CAPACITY_N / 2 * lockamp_get_time_step_ns(lockamp);
+}
+
+static inline void lockamp_reset_ma_filter(struct lockamp *lockamp)
+{
+	u32 orig = ioread32(lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
+	u32 modi = orig | LOCKAMP_MA_RESET_BIT;
+	dev_info(lockamp->dev, "debug_control: %d\n", orig);
+	iowrite32(modi, lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
+	iowrite32(orig, lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
 }
 
 static inline s32 lockamp_fifo_pop(struct lockamp *lockamp)
@@ -264,11 +284,13 @@ static __maybe_unused inline s32 lockamp_fifo_pop_dbg(struct lockamp *lockamp)
 static inline void lockamp_fifo_pop_sample(struct lockamp *lockamp, struct sample *s)
 {
 	int i;
+	int multiplier;
 	for (i = 0; LOCKAMP_SITES_PER_SAMPLE > i; ++i) {
-		s->sites[i].hf_re = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
-		s->sites[i].hf_im = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
-		s->sites[i].lf_re = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
-		s->sites[i].lf_im = lockamp_fifo_pop(lockamp) * lockamp->sample_multipliers[i];
+		multiplier = lockamp->sample_multipliers[i];
+		s->sites[i].hf_re = lockamp_fifo_pop(lockamp) * multiplier;
+		s->sites[i].hf_im = lockamp_fifo_pop(lockamp) * multiplier;
+		s->sites[i].lf_re = lockamp_fifo_pop(lockamp) * multiplier;
+		s->sites[i].lf_im = lockamp_fifo_pop(lockamp) * multiplier;
 	}
 }
 
