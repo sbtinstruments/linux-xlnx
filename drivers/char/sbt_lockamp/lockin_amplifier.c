@@ -130,6 +130,7 @@ static int lockamp_probe(struct platform_device *pdev)
 	mutex_init(&lockamp->adc_buf_m);
 
 	/* Signal buffer */
+#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
 	lockamp->signal_buf.buf = vmalloc(LOCKAMP_SIGNAL_BUF_CAPACITY);
 	lockamp->signal_buf.capacity_n = LOCKAMP_SIGNAL_BUF_CAPACITY / sizeof(struct sample);
 	lockamp->signal_buf.head = 0;
@@ -145,6 +146,12 @@ static int lockamp_probe(struct platform_device *pdev)
 		result = -EINVAL;
 		goto out_sbuf;
 	}
+#else
+	lockamp->signal_buf.buf = NULL;
+	lockamp->signal_buf.capacity_n = 0;
+	lockamp->signal_buf.head = 0;
+	lockamp->signal_buf.tail = 0;
+#endif
 
 	/* Dev (device number) */
 	result = alloc_chrdev_region(&lockamp->chrdev_no, 0, 1, pdev->name);
