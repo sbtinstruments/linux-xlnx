@@ -481,8 +481,8 @@ static ssize_t dac_data_bits_store(
 }
 DEVICE_ATTR(dac_data_bits, S_IRUGO | S_IWUSR, dac_data_bits_show, dac_data_bits_store);
 
-/* hw_debug1 */
-static ssize_t hw_debug1_show(
+/* config */
+static ssize_t config_show(
 	struct device *device,
 	struct device_attribute *attr,
 	char *buf)
@@ -493,14 +493,14 @@ static ssize_t hw_debug1_show(
 	if (ret < 0) {
 		return ret;
 	}
-	ret = lockamp_get_debug1(lockamp, &value);
+	ret = lockamp_get_config(lockamp, &value);
 	lockamp_pm_put(lockamp);
 	if (ret < 0) {
 		return ret;
 	}
 	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
 }
-static ssize_t hw_debug1_store(
+static ssize_t config_store(
 	struct device *device,
 	struct device_attribute *attr,
 	const char *buf,
@@ -516,17 +516,17 @@ static ssize_t hw_debug1_store(
 	if (ret < 0) {
 		return ret;
 	}
-	ret = lockamp_set_debug1(lockamp, value);
+	ret = lockamp_set_config(lockamp, value);
 	lockamp_pm_put(lockamp);
 	if (ret < 0) {
 		return ret;
 	}
 	return count;
 }
-DEVICE_ATTR(hw_debug1, S_IRUGO | S_IWUSR, hw_debug1_show, hw_debug1_store);
+DEVICE_ATTR(config, S_IRUGO | S_IWUSR, config_show, config_store);
 
-/* hw_debug_control */
-static ssize_t hw_debug_control_show(
+/* debug_control */
+static ssize_t debug_control_show(
 	struct device *device,
 	struct device_attribute *attr,
 	char *buf)
@@ -544,7 +544,7 @@ static ssize_t hw_debug_control_show(
 	}
 	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
 }
-static ssize_t hw_debug_control_store(
+static ssize_t debug_control_store(
 	struct device *device,
 	struct device_attribute *attr,
 	const char *buf,
@@ -567,7 +567,7 @@ static ssize_t hw_debug_control_store(
 	}
 	return count;
 }
-DEVICE_ATTR(hw_debug_control, S_IRUGO | S_IWUSR, hw_debug_control_show, hw_debug_control_store);
+DEVICE_ATTR(debug_control, S_IRUGO | S_IWUSR, debug_control_show, debug_control_store);
 
 /* reset_ma_filter */
 static ssize_t reset_ma_filter_store(
@@ -873,9 +873,9 @@ DEVICE_ATTR(amp_supply_force_off,
             amp_supply_force_off_show,
             amp_supply_force_off_store);
 
-DEVICE_INT_ATTR(debug1, S_IRUGO, lockamp_debug1);
-DEVICE_INT_ATTR(debug2, S_IRUGO, lockamp_debug2);
-DEVICE_INT_ATTR(debug3, S_IRUGO, lockamp_debug3);
+DEVICE_INT_ATTR(drv_debug1, S_IRUGO, lockamp_debug1);
+DEVICE_INT_ATTR(drv_debug2, S_IRUGO, lockamp_debug2);
+DEVICE_INT_ATTR(drv_debug3, S_IRUGO, lockamp_debug3);
 
 /* attribute group */
 static struct attribute *attrs[] = {
@@ -900,17 +900,17 @@ static struct attribute *attrs[] = {
 	&dev_attr_ma_scale.attr,
 	&dev_attr_cic_scale.attr,
 	&dev_attr_dac_data_bits.attr,
-	&dev_attr_hw_debug1.attr,
-	&dev_attr_hw_debug_control.attr,
+	&dev_attr_config.attr,
+	&dev_attr_debug_control.attr,
 	&dev_attr_reset_ma_filter.attr,
 	&dev_attr_fir_filter.attr,
 	&dev_attr_sample_multipliers.attr,
 	&dev_attr_fifo_read_duration_us.attr,
 	&dev_attr_fifo_read_delay_us.attr,
 	&dev_attr_amp_supply_force_off.attr,
-	&dev_attr_debug1.attr.attr,
-	&dev_attr_debug2.attr.attr,
-	&dev_attr_debug3.attr.attr,
+	&dev_attr_drv_debug1.attr.attr,
+	&dev_attr_drv_debug2.attr.attr,
+	&dev_attr_drv_debug3.attr.attr,
 	NULL
 };
 static struct bin_attribute *bin_attrs[] = {
