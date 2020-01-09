@@ -41,9 +41,8 @@
 
 #define LOCKAMP_REG_FIR_COEF_BASE   0x800
 
-/* Note that the time step is exact. That is, it has no fractional part
- * which is why it can be safely stored in an integer. */
-#define LOCKAMP_BASE_TIME_STEP      2728
+/* Corresponding to 125 MHz */
+#define LOCKAMP_BASE_TIME_STEP      8
 #define LOCKAMP_GEN_SCALE_MIN       0
 /* s18 max */
 #define LOCKAMP_GEN_SCALE_MAX       131071
@@ -265,12 +264,24 @@ int lockamp_set_decimation(struct lockamp *lockamp, u32 value);
 
 static inline int lockamp_get_time_step_ns(struct lockamp *lockamp, unsigned int *value)
 {
+	int ret;
+	u32 cic_length;
 	u32 decimation;
-	int ret = lockamp_get_decimation(lockamp, &decimation);
+	ret = lockamp_get_cic_length(lockamp, &cic_length);
 	if (ret < 0) {
 		return ret;
 	}
-	*value = LOCKAMP_BASE_TIME_STEP * decimation;
+	ret = lockamp_get_decimation(lockamp, &decimation);
+	if (ret < 0) {
+		return ret;
+	}
+	/* The data time step depends on three things:
+	 *   1) The input clock (125 MHz freq; 8 ns time step)
+	 *   2) The length of the CIC filter
+	 *   3) The number of half bands filters (indirectly, the so-called
+	 *      decimation factor).
+	 */
+	*value = LOCKAMP_BASE_TIME_STEP * cic_length * decimation;
 	return 0;
 }
 
