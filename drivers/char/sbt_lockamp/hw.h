@@ -140,14 +140,21 @@ static inline int lockamp_get_gen_step_frac(struct lockamp *lockamp,
                                             struct lockamp_gen_control *gen,
                                             u16 *value)
 {
-	return regmap_raw_read(lockamp->regmap, gen->step_frac, value, sizeof(u16));
+	u32 value32;
+	int ret = regmap_read(lockamp->regmap, gen->step_frac, &value32);
+	if (ret < 0) {
+		return ret;
+	}
+	*value = value32;
+	return 0;
 }
 
 static inline int lockamp_set_gen_step_frac(struct lockamp *lockamp,
                                             struct lockamp_gen_control *gen,
                                             u16 value)
 {
-	return regmap_raw_write(lockamp->regmap, gen->step_frac, &value, sizeof(u16));
+	u32 value32 = value;
+	return regmap_write(lockamp->regmap, gen->step_frac, value32);
 }
 
 static inline int lockamp_get_gen_lock_phase(struct lockamp *lockamp,
