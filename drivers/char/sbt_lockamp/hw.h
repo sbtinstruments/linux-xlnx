@@ -224,12 +224,12 @@ static inline int lockamp_set_debug_control(struct lockamp *lockamp, u32 value)
 	return regmap_write(lockamp->regmap, LOCKAMP_REG_DEBUG_CONTROL, value);
 }
 
-static inline int lockamp_get_debug1(struct lockamp *lockamp, u32 *value)
+static inline int lockamp_get_config(struct lockamp *lockamp, u32 *value)
 {
 	return regmap_read(lockamp->regmap, LOCKAMP_REG_CONFIG_CONTROL, value);
 }
 
-static inline int lockamp_set_debug1(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_config(struct lockamp *lockamp, u32 value)
 {
 	return regmap_write(lockamp->regmap, LOCKAMP_REG_CONFIG_CONTROL, value);
 }
