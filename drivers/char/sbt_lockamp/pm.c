@@ -49,16 +49,16 @@ static int lockamp_powerdown_iio_chan(struct iio_channel *chan, bool powerdown)
 static int lockamp_enable_converters(struct device *dev, bool enabled)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
-	int error;
-	error = lockamp_powerdown_iio_chan(lockamp->adc_site0, !enabled);
-	if (error) {
+	int ret;
+	ret = lockamp_powerdown_iio_chan(lockamp->adc_site0, !enabled);
+	if (ret < 0) {
 		dev_err(dev, "Failed to power down the ADC\n");
-		return error;
+		return ret;
 	}
-	error = lockamp_powerdown_iio_chan(lockamp->dac_site0, !enabled);
-	if (error) {
+	ret = lockamp_powerdown_iio_chan(lockamp->dac_site0, !enabled);
+	if (ret < 0) {
 		dev_err(dev, "Failed to power down the DAC\n");
-		return error;
+		return ret;
 	}
 	dev_dbg(dev, "Success\n");
 	return 0;
@@ -67,17 +67,17 @@ static int lockamp_enable_converters(struct device *dev, bool enabled)
 static int lockamp_pm_runtime_suspend(struct device *dev)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
-	int error;
-	error = lockamp_enable_converters(dev, false);
-	if (error) {
-		dev_err(dev, "Failed to disable the AD/DA converters: %d\n", error);
-		return error;
+	int ret;
+	ret = lockamp_enable_converters(dev, false);
+	if (ret < 0) {
+		dev_err(dev, "Failed to disable the AD/DA converters: %d\n", ret);
+		return ret;
 	}
 	if (!lockamp->amp_supply_force_off) {
-		error = regulator_disable(lockamp->amp_supply);
-		if (error) {
-			dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", error);
-			return error;
+		ret = regulator_disable(lockamp->amp_supply);
+		if (ret < 0) {
+			dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
+			return ret;
 		}
 	}
 	dev_dbg(dev, "Success\n");
@@ -87,19 +87,39 @@ static int lockamp_pm_runtime_suspend(struct device *dev)
 static int lockamp_pm_runtime_resume(struct device *dev)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
-	int error = lockamp_enable_converters(dev, true);
-	if (error) {
-		dev_err(dev, "Failed to enable the AD/DA converters: %d\n", error);
-		return error;
+	int ret = lockamp_enable_converters(dev, true);
+	if (ret < 0) {
+		dev_err(dev, "Failed to enable the AD/DA converters: %d\n", ret);
+		return ret;
 	}
 	if (!lockamp->amp_supply_force_off) {
-		error = regulator_enable(lockamp->amp_supply);
-		if (error) {
-			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
-			return error;
+		ret = regulator_enable(lockamp->amp_supply);
+		if (ret < 0) {
+			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
+			return ret;
 		}
 	}
+	/* During a power off, the lock-in amplifier will not get clock input from
+	 * the ADC. In turn, this corrupts the FPGA state (e.g., the MA filter's
+	 * sum register). We reset the FPGA to get everything in working order
+	 * again. */
 	lockamp_reset(lockamp);
+	/* Now that everything is reset, we need to restore the registers to the
+	 * state that they were in before the power off. We do that using the
+	 * regmap cache.
+	 * One caveat: During the initial probe, the hardware must be turned on
+	 * (indirectly calling this function) before the regmap is initialized.
+	 * In order to prevent uninitalized access, we skip the state reset if
+	 * the regmap is not defined yet. Again, this should only occur during
+	 * the inital probe. */
+	if (lockamp->regmap) {
+		regcache_mark_dirty(lockamp->regmap);
+		ret = regcache_sync(lockamp->regmap);
+		if (ret < 0) {
+			dev_err(dev, "Failed to sync regmap cache on resume: %d\n", ret);
+			return ret;
+		}
+	}
 	dev_dbg(dev, "Success\n");
 	return 0;
 }

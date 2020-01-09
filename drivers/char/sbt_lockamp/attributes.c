@@ -17,14 +17,17 @@ static ssize_t decimation_factor_show(
 	char *buf)
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	int error;
+	int ret;
 	u32 value;
-	error = lockamp_pm_get(lockamp);
-	if (error < 0) {
-		return error;
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	value = lockamp_get_decimation(lockamp);
+	ret = lockamp_get_decimation(lockamp, &value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 static ssize_t decimation_factor_store(
@@ -35,18 +38,18 @@ static ssize_t decimation_factor_store(
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	u32 value;
-	int result = kstrtou32(buf, 0, &value);
-	if (0 != result) {
-		return result;
+	int ret = kstrtou32(buf, 0, &value);
+	if (ret < 0) {
+		return ret;
 	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	result = lockamp_set_decimation(lockamp, value);
+	ret = lockamp_set_decimation(lockamp, value);
 	lockamp_pm_put(lockamp);
-	if (0 != result) {
-		return result;
+	if (ret < 0) {
+		return ret;
 	}
 	return count;
 }
@@ -60,12 +63,15 @@ static ssize_t time_step_ns_show(
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	unsigned int value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	int ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	value = lockamp_get_time_step_ns(lockamp);
+	ret = lockamp_get_time_step_ns(lockamp, &value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return snprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 DEVICE_ATTR(time_step_ns, S_IRUGO, time_step_ns_show, NULL);
@@ -78,12 +84,15 @@ static ssize_t fir_cycles_show(
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	u32 value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	int ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	value = lockamp_get_fir_cycles(lockamp);
+	ret = lockamp_get_fir_cycles(lockamp, &value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return snprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 DEVICE_ATTR(fir_cycles, S_IRUGO, fir_cycles_show, NULL);
@@ -136,12 +145,15 @@ DEVICE_ATTR(gen_scale_max, S_IRUGO, gen_scale_max_show, NULL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		int ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		value = lockamp_get_gen_scale(lockamp, &(_gen_control)); \
+		ret = lockamp_get_gen_scale(lockamp, &(_gen_control), &value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
 	} \
 	static ssize_t _name##_scale_store( \
@@ -152,20 +164,23 @@ DEVICE_ATTR(gen_scale_max, S_IRUGO, gen_scale_max_show, NULL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = kstrtos32(buf, 0, &value); \
-		if (0 != result) { \
-			return result; \
+		int ret = kstrtou32(buf, 0, &value); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		result = lockamp_adjust_gen_scale(&value); \
-		if (0 != result) { \
-			return result; \
+		ret = lockamp_adjust_gen_scale(&value); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		lockamp_set_gen_scale(lockamp, &(_gen_control), value); \
+		ret = lockamp_set_gen_scale(lockamp, &(_gen_control), value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return count; \
 	} \
 	DEVICE_ATTR(_name##_scale, S_IRUGO | S_IWUSR, _name##_scale_show, _name##_scale_store);
@@ -182,12 +197,15 @@ DEVICE_ATTR_GEN_SCALE(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		int ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		value = lockamp_get_gen_step_int(lockamp, &(_gen_control)); \
+		ret = lockamp_get_gen_step_int(lockamp, &(_gen_control), &value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
 	} \
 	static ssize_t _name##_step_int_store( \
@@ -198,16 +216,19 @@ DEVICE_ATTR_GEN_SCALE(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = kstrtou32(buf, 0, &value); \
-		if (0 != result) { \
-			return result; \
+		int ret = kstrtou32(buf, 0, &value); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		lockamp_set_gen_step_int(lockamp, &(_gen_control), value); \
+		ret = lockamp_set_gen_step_int(lockamp, &(_gen_control), value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return count; \
 	} \
 	DEVICE_ATTR(_name##_step_int, S_IRUGO | S_IWUSR, _name##_step_int_show, _name##_step_int_store);
@@ -224,12 +245,15 @@ DEVICE_ATTR_GEN_STEP_INT(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u16 value; \
-		int result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		int ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		value = lockamp_get_gen_step_frac(lockamp, &(_gen_control)); \
+		ret = lockamp_get_gen_step_frac(lockamp, &(_gen_control), &value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
 	} \
 	static ssize_t _name##_step_frac_store( \
@@ -240,16 +264,19 @@ DEVICE_ATTR_GEN_STEP_INT(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u16 value; \
-		int result = kstrtou16(buf, 0, &value); \
-		if (0 != result) { \
-			return result; \
+		int ret = kstrtou16(buf, 0, &value); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		lockamp_set_gen_step_frac(lockamp, &(_gen_control), value); \
+		ret = lockamp_set_gen_step_frac(lockamp, &(_gen_control), value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return count; \
 	} \
 	DEVICE_ATTR(_name##_step_frac, S_IRUGO | S_IWUSR, _name##_step_frac_show, _name##_step_frac_store);
@@ -266,12 +293,15 @@ DEVICE_ATTR_GEN_STEP_FRAC(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		int ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		value = lockamp_get_gen_lock_phase(lockamp, &(_gen_control)); \
+		ret = lockamp_get_gen_lock_phase(lockamp, &(_gen_control), &value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
 	} \
 	static ssize_t _name##_lock_phase_store( \
@@ -282,16 +312,19 @@ DEVICE_ATTR_GEN_STEP_FRAC(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = kstrtou32(buf, 0, &value); \
-		if (0 != result) { \
-			return result; \
+		int ret = kstrtou32(buf, 0, &value); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		lockamp_set_gen_lock_phase(lockamp, &(_gen_control), value); \
+		ret = lockamp_set_gen_lock_phase(lockamp, &(_gen_control), value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return count; \
 	} \
 	DEVICE_ATTR(_name##_lock_phase, S_IRUGO | S_IWUSR, _name##_lock_phase_show, _name##_lock_phase_store);
@@ -308,12 +341,15 @@ DEVICE_ATTR_GEN_LOCK_PHASE(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		int ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		value = lockamp_get_##_name##_length(lockamp); \
+		ret = lockamp_get_##_name##_length(lockamp, &value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
 	} \
 	static ssize_t _name##_length_store( \
@@ -324,19 +360,22 @@ DEVICE_ATTR_GEN_LOCK_PHASE(gen2, LOCKAMP_GEN2_CONTROL);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = kstrtou32(buf, 0, &value); \
-		if (0 != result) { \
-			return result; \
+		int ret = kstrtou32(buf, 0, &value); \
+		if (ret < 0) { \
+			return ret; \
 		} \
 		if ((_val_min) > value || value > (_val_max)) { \
 			return -ERANGE; \
 		} \
-		result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		lockamp_set_##_name##_length(lockamp, value); \
+		ret = lockamp_set_##_name##_length(lockamp, value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return count; \
 	} \
 	DEVICE_ATTR(_name##_length, S_IRUGO | S_IWUSR, _name##_length_show, _name##_length_store);
@@ -353,12 +392,15 @@ DEVICE_ATTR_FILTER_LENGTH(cic, 2, 4095);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		int ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		value = lockamp_get_##_name##_scale(lockamp); \
+		ret = lockamp_get_##_name##_scale(lockamp, &value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return scnprintf(buf, PAGE_SIZE, "%d\n", value); \
 	} \
 	static ssize_t _name##_scale_store( \
@@ -369,19 +411,22 @@ DEVICE_ATTR_FILTER_LENGTH(cic, 2, 4095);
 	{ \
 		struct lockamp *lockamp = dev_get_drvdata(device); \
 		u32 value; \
-		int result = kstrtou32(buf, 0, &value); \
-		if (0 != result) { \
-			return result; \
+		int ret = kstrtou32(buf, 0, &value); \
+		if (ret < 0) { \
+			return ret; \
 		} \
 		if ((_val_min) > value || value > (_val_max)) { \
 			return -ERANGE; \
 		} \
-		result = lockamp_pm_get(lockamp); \
-		if (result < 0) { \
-			return result; \
+		ret = lockamp_pm_get(lockamp); \
+		if (ret < 0) { \
+			return ret; \
 		} \
-		lockamp_set_##_name##_scale(lockamp, value); \
+		ret = lockamp_set_##_name##_scale(lockamp, value); \
 		lockamp_pm_put(lockamp); \
+		if (ret < 0) { \
+			return ret; \
+		} \
 		return count; \
 	} \
 	DEVICE_ATTR(_name##_scale, S_IRUGO | S_IWUSR, _name##_scale_show, _name##_scale_store);
@@ -396,13 +441,16 @@ static ssize_t dac_data_bits_show(
 	char *buf)
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	int value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	u32 value;
+	int ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	value = lockamp_get_dac_data_bits(lockamp);
+	ret = lockamp_get_dac_data_bits(lockamp, &value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 static ssize_t dac_data_bits_store(
@@ -412,20 +460,23 @@ static ssize_t dac_data_bits_store(
 	size_t count)
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	s32 value;
-	int result = kstrtou32(buf, 0, &value);
-	if (0 != result) {
-		return result;
+	u32 value;
+	int ret = kstrtou32(buf, 0, &value);
+	if (ret < 0) {
+		return ret;
 	}
 	if (31 < value) {
 		return -ERANGE;
 	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	lockamp_set_dac_data_bits(lockamp, value);
+	ret = lockamp_set_dac_data_bits(lockamp, value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return count;
 }
 DEVICE_ATTR(dac_data_bits, S_IRUGO | S_IWUSR, dac_data_bits_show, dac_data_bits_store);
@@ -437,13 +488,16 @@ static ssize_t hw_debug1_show(
 	char *buf)
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	int value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	u32 value;
+	int ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	value = lockamp_get_debug1(lockamp);
+	ret = lockamp_get_debug1(lockamp, &value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 static ssize_t hw_debug1_store(
@@ -454,16 +508,19 @@ static ssize_t hw_debug1_store(
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	u32 value;
-	int result = kstrtou32(buf, 0, &value);
-	if (0 != result) {
-		return result;
+	int ret = kstrtou32(buf, 0, &value);
+	if (ret < 0) {
+		return ret;
 	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	lockamp_set_debug1(lockamp, value);
+	ret = lockamp_set_debug1(lockamp, value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return count;
 }
 DEVICE_ATTR(hw_debug1, S_IRUGO | S_IWUSR, hw_debug1_show, hw_debug1_store);
@@ -475,13 +532,16 @@ static ssize_t hw_debug_control_show(
 	char *buf)
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	int value;
-	int result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	u32 value;
+	int ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	value = lockamp_get_debug_control(lockamp);
+	ret = lockamp_get_debug_control(lockamp, &value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return scnprintf(buf, PAGE_SIZE, "%d\n", value);
 }
 static ssize_t hw_debug_control_store(
@@ -492,16 +552,19 @@ static ssize_t hw_debug_control_store(
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	u32 value;
-	int result = kstrtou32(buf, 0, &value);
-	if (0 != result) {
-		return result;
+	int ret = kstrtou32(buf, 0, &value);
+	if (ret < 0) {
+		return ret;
 	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	lockamp_set_debug_control(lockamp, value);
+	ret = lockamp_set_debug_control(lockamp, value);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return count;
 }
 DEVICE_ATTR(hw_debug_control, S_IRUGO | S_IWUSR, hw_debug_control_show, hw_debug_control_store);
@@ -515,20 +578,23 @@ static ssize_t reset_ma_filter_store(
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	bool value;
-	int result = kstrtobool(buf, &value);
-	if (0 != result) {
-		return result;
+	int ret = kstrtobool(buf, &value);
+	if (ret < 0) {
+		return ret;
 	}
 	/* Only accept truthy values. E.g., "1" or "y". */
 	if (!value) {
 		return -EINVAL;
 	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	lockamp_reset_ma_filter(lockamp);
+	ret = lockamp_reset_ma_filter(lockamp);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return count;
 }
 DEVICE_ATTR(reset_ma_filter, S_IWUSR, NULL, reset_ma_filter_store);
@@ -635,22 +701,25 @@ static ssize_t fir_filter_store(
 	size_t count)
 {
 	struct lockamp *lockamp = dev_get_drvdata(device);
-	int result;
+	int ret;
 	int content_length = count;
 	/* Truncate the newline away */
 	if (0 < content_length && '\n' == buf[content_length - 1]) {
 		content_length -= 1;
 	}
-	result = strn_to_fir_filter(buf, content_length, &fir_filter);
-	if (0 > result) {
-		return result;
+	ret = strn_to_fir_filter(buf, content_length, &fir_filter);
+	if (ret < 0) {
+		return ret;
 	}
-	result = lockamp_pm_get(lockamp);
-	if (result < 0) {
-		return result;
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0) {
+		return ret;
 	}
-	lockamp_set_filter_coefficients(lockamp, lockamp_fir_coefs[fir_filter]);
+	ret = lockamp_set_fir_coefs(lockamp, lockamp_fir_coefs[fir_filter]);
 	lockamp_pm_put(lockamp);
+	if (ret < 0) {
+		return ret;
+	}
 	return count;
 }
 DEVICE_ATTR(fir_filter, S_IRUGO | S_IWUSR, fir_filter_show, fir_filter_store);
@@ -674,9 +743,9 @@ static ssize_t sample_multipliers_store(
 	int i;
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	int values[LOCKAMP_SITES_PER_SAMPLE];
-	int result = sscanf(buf, "%d %d", &values[0], &values[1]);
-	if (LOCKAMP_SITES_PER_SAMPLE != result) {
-		return result;
+	int ret = sscanf(buf, "%d %d", &values[0], &values[1]);
+	if (LOCKAMP_SITES_PER_SAMPLE != ret) {
+		return ret;
 	}
 	mutex_lock(&lockamp->signal_buf_m);
 	for (i = 0; LOCKAMP_SITES_PER_SAMPLE > i; ++i) {
@@ -714,24 +783,24 @@ static ssize_t latest_adc_samples_read(
 	loff_t offset,
 	size_t count)
 {
-	int result;
+	int ret;
 	struct device *dev = container_of(kobj, struct device, kobj);
 	struct lockamp *lockamp = dev_get_drvdata(dev);
 	mutex_lock(&lockamp->adc_buf_m);
 	/* Buffer samples at start of request */
 	if (0 == offset) {
-		result = lockamp_pm_get(lockamp);
-		if (result < 0) {
-			return result;
+		ret = lockamp_pm_get(lockamp);
+		if (ret < 0) {
+			return ret;
 		}
 		lockamp_get_adc_samples(lockamp, (s32*)lockamp->adc_buffer);
 		lockamp_pm_put(lockamp);
 	}
-	result = memory_read_from_buffer(buf, count, &offset,
-	                                 lockamp->adc_buffer,
-                                     LOCKAMP_ADC_SAMPLES_SIZE);
+	ret = memory_read_from_buffer(buf, count, &offset,
+	                              lockamp->adc_buffer,
+	                              LOCKAMP_ADC_SAMPLES_SIZE);
 	mutex_unlock(&lockamp->adc_buf_m);
-	return result;
+	return ret;
 }
 BIN_ATTR_RO(latest_adc_samples, LOCKAMP_ADC_SAMPLES_SIZE);
 
@@ -771,19 +840,19 @@ static ssize_t amp_supply_force_off_store(
 	size_t count)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
-	int error = kstrtobool(buf, &lockamp->amp_supply_force_off);
-	if (0 != error) {
-		return error;
+	int ret = kstrtobool(buf, &lockamp->amp_supply_force_off);
+	if (ret < 0) {
+		return ret;
 	}
 	/* Regulator is currently enabled... */
 	if (regulator_is_enabled(lockamp->amp_supply)) {
 		/* ...and we want to force it off... */
 		if (lockamp->amp_supply_force_off) {
 			/* ...so we disable the regulator right away. */
-			error = regulator_disable(lockamp->amp_supply);
-			if (error) {
-				dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", error);
-				return error;
+			ret = regulator_disable(lockamp->amp_supply);
+			if (ret < 0) {
+				dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
+				return ret;
 			}
 		}
 	}
@@ -791,10 +860,10 @@ static ssize_t amp_supply_force_off_store(
 	 * and we no longer want to force it off... */
 	else if (pm_runtime_active(dev) && !lockamp->amp_supply_force_off) {
 		/* ...so we enable the regulator right way. */
-		error = regulator_enable(lockamp->amp_supply);
-		if (error) {
-			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", error);
-			return error;
+		ret = regulator_enable(lockamp->amp_supply);
+		if (ret < 0) {
+			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
+			return ret;
 		}
 	}
 	return count;

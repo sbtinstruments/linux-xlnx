@@ -36,6 +36,7 @@ void lockamp_reset(struct lockamp *lockamp)
 
 int lockamp_set_decimation(struct lockamp *lockamp, u32 value)
 {
+	int ret;
 	u32 hb_filters;
 	u32 fir_cycles;
 	/* 1:  Sample rate ~367 KHz (time step: 2728 ns)
@@ -56,16 +57,26 @@ int lockamp_set_decimation(struct lockamp *lockamp, u32 value)
 	 */
 	hb_filters = ilog2(value);
 	/* Set half-band filters */
-	iowrite32(hb_filters, lockamp->control + LOCKAMP_REG_HB_FILTERS);
+	ret = regmap_write(lockamp->regmap, LOCKAMP_REG_HB_FILTERS, hb_filters);
+	if (ret < 0) {
+		return ret;
+	}
 	/* Set FIR cycles accordingly */
 	fir_cycles = min(511, 341 * (1 << hb_filters) / 8 - 6);
-	lockamp_set_fir_cycles(lockamp, fir_cycles);
+	ret = lockamp_set_fir_cycles(lockamp, fir_cycles);
+	if (ret < 0) {
+		return ret;
+	}
 	return 0;
 }
 
-u32 lockamp_get_decimation(struct lockamp *lockamp)
+int lockamp_get_decimation(struct lockamp *lockamp, u32 *value)
 {
-	u32 hb_filters = ioread32(lockamp->control + LOCKAMP_REG_HB_FILTERS);
+	u32 hb_filters;
+	int ret = regmap_read(lockamp->regmap, LOCKAMP_REG_HB_FILTERS, &hb_filters);
+	if (ret < 0) {
+		return 0;
+	}
 	/*
 	 * 0 -> 1
 	 * 1 -> 2
@@ -73,17 +84,17 @@ u32 lockamp_get_decimation(struct lockamp *lockamp)
 	 * 3 -> 8
 	 * 4 -> 16
 	 */
-	return 1 << hb_filters;
+	*value = 1 << hb_filters;
+	return 0;
 }
 
-void lockamp_set_filter_coefficients(struct lockamp *lockamp, const s32 *coefs)
+int lockamp_set_fir_coefs(struct lockamp *lockamp, const s32 *coefs)
 {
-	size_t i;
-	for (i = 0; LOCKAMP_FIR_COEF_LEN > i; ++i) {
-		iowrite32(coefs[i], lockamp->control + LOCKAMP_REG_FIR_COEF_BASE + i * 4);
-	}
+	return regmap_bulk_write(lockamp->regmap, LOCKAMP_REG_FIR_COEF_BASE,
+	                         coefs, LOCKAMP_FIR_COEF_LEN);
 }
 
+/* Raw read (not through regmap) */
 void lockamp_get_adc_samples(struct lockamp *lockamp, s32 *adc_samples)
 {
 	int i;
