@@ -9,6 +9,7 @@
 #include <asm/atomic.h>
 #include <linux/cdev.h>
 #include <linux/pm_runtime.h>
+#include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/sysfs.h>
 
@@ -47,6 +48,7 @@ struct lockamp {
 	dev_t chrdev_no;
 	struct gpio_desc *reset;
 	struct iio_channel *adc_site0, *adc_site1, *dac_site0, *dac_site1;
+	struct regmap *regmap;
 	u8 __iomem *control;
 	struct regulator *amp_supply;
 	bool amp_supply_force_off;

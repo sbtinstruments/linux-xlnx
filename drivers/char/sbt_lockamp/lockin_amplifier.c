@@ -83,26 +83,80 @@ static int lockamp_get_iomem(struct lockamp *lockamp,
 static int lockamp_get_io_resources(struct lockamp *lockamp,
                                     struct platform_device *pdev)
 {
-	int error;
-	error = lockamp_get_iio_chans(lockamp, pdev);
-	if (error) {
-		dev_err(&pdev->dev, "Failed to get IIO channels: %d\n", error);
-		return error;
+	int ret;
+	ret = lockamp_get_iio_chans(lockamp, pdev);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to get IIO channels: %d\n", ret);
+		return ret;
 	}
-	error = lockamp_get_iomem(lockamp, pdev);
-	if (error) {
-		dev_err(&pdev->dev, "Failed to get IO memory: %d\n", error);
-		return error;
+	ret = lockamp_get_iomem(lockamp, pdev);
+	if (ret < 0) {
+		dev_err(&pdev->dev, "Failed to get IO memory: %d\n", ret);
+		return ret;
 	}
 	return 0;
 }
+
+static bool lockamp_reg_gap(struct device *dev, unsigned int reg) {
+	if (LOCKAMP_REG_GEN2_LOCK_PHASE < reg && reg < LOCKAMP_REG_DEBUG0) {
+		return true;
+	}
+	if (LOCKAMP_REG_DEBUG_CONTROL < reg && reg < LOCKAMP_REG_FIR_COEF_BASE) {
+		return true;
+	}
+	return false;
+}
+
+static bool lockamp_readable_reg(struct device *dev, unsigned int reg)
+{
+	return !lockamp_reg_gap(dev, reg);
+}
+
+static bool lockamp_writeable_reg(struct device *dev, unsigned int reg)
+{
+	if (lockamp_reg_gap(dev, reg)) {
+		return false;
+	}
+	switch (reg) {
+	case LOCKAMP_REG_VERSION:
+	case LOCKAMP_REG_DEBUG0:
+		return false;
+	}
+	return true;
+}
+
+static bool lockamp_volatile_reg(struct device *dev, unsigned int reg)
+{
+	switch (reg) {
+	case LOCKAMP_REG_FIFO_SIZE:
+	case LOCKAMP_REG_FIFO_DATA:
+	case LOCKAMP_REG_ADC_BUFFER:
+		return true;
+	}
+	return false;
+}
+
+static struct regmap_config lockamp_regmap_config = {
+	.reg_bits             = 32,
+	.val_bits             = 32,
+	.reg_stride           = 4,
+	.max_register         = 0x1000,
+	/* num_reg_defaults_raw ensures that the cache is initialized from
+	 * HW reads. It should be equal to the register count. I.e.,
+	 * max_register / reg_stride. */
+	.num_reg_defaults_raw = 1024,
+	.cache_type           = REGCACHE_FLAT,
+	.readable_reg         = lockamp_readable_reg,
+	.writeable_reg        = lockamp_writeable_reg,
+	.volatile_reg         = lockamp_volatile_reg,
+};
 
 static int lockamp_probe(struct platform_device *pdev)
 {
 	struct lockamp *lockamp;
 	u32 version;
 	int i;
-	int result = 0;
+	int ret = 0;
 
 	lockamp = devm_kzalloc(&pdev->dev, sizeof(*lockamp), GFP_KERNEL);
 	if (NULL == lockamp) {
@@ -140,7 +194,7 @@ static int lockamp_probe(struct platform_device *pdev)
 	if (!is_power_of_2(lockamp->signal_buf.capacity_n)) {
 		dev_err(lockamp->dev, "Signal buffer capacity must be a power of 2 (tried with %d).\n",
 		        lockamp->signal_buf.capacity_n);
-		result = -EINVAL;
+		ret = -EINVAL;
 		goto out_sbuf;
 	}
 #else
@@ -151,8 +205,8 @@ static int lockamp_probe(struct platform_device *pdev)
 #endif
 
 	/* Dev (device number) */
-	result = alloc_chrdev_region(&lockamp->chrdev_no, 0, 1, pdev->name);
-	if (0 != result) {
+	ret = alloc_chrdev_region(&lockamp->chrdev_no, 0, 1, pdev->name);
+	if (ret < 0) {
 		dev_err(lockamp->dev, "Failed to allocate character device region.\n");
 		goto out_sbuf;
 	}
@@ -161,8 +215,8 @@ static int lockamp_probe(struct platform_device *pdev)
 	cdev_init(&lockamp->cdev, &lockamp_fops);
 	lockamp->cdev.owner = THIS_MODULE;
 	lockamp->cdev.ops = &lockamp_fops;
-	result = cdev_add(&lockamp->cdev, lockamp->chrdev_no, 1);
-	if (0 != result) {
+	ret = cdev_add(&lockamp->cdev, lockamp->chrdev_no, 1);
+	if (ret < 0) {
 		dev_err(lockamp->dev, "Failed to add character device.\n");
 		goto out_chrdev;
 	}
@@ -172,14 +226,14 @@ static int lockamp_probe(struct platform_device *pdev)
 	                             lockamp->chrdev_no, NULL, pdev->name);
 	if (IS_ERR(lockamp->dev)) {
 		dev_err(lockamp->dev, "Failed to create device.\n");
-		result = PTR_ERR(lockamp->dev);
+		ret = PTR_ERR(lockamp->dev);
 		goto out_cdev;
 	}
 	dev_set_drvdata(lockamp->dev, lockamp);
 
 	/* I/O resources */
-	result = lockamp_get_io_resources(lockamp, pdev);
-	if (0 != result) {
+	ret = lockamp_get_io_resources(lockamp, pdev);
+	if (ret < 0) {
 		dev_err(lockamp->dev, "Failed to initialize lock-in amplifier.\n");
 		goto out_device;
 	}
@@ -188,27 +242,41 @@ static int lockamp_probe(struct platform_device *pdev)
 	lockamp->amp_supply = devm_regulator_get(&pdev->dev, "amp");
 	if (IS_ERR(lockamp->amp_supply)) {
 		dev_err(lockamp->dev, "Failed to get 'amp' regulator.\n");
-		result = PTR_ERR(lockamp->amp_supply);
+		ret = PTR_ERR(lockamp->amp_supply);
 		goto out_device;
 	}
 	lockamp->amp_supply_force_off = true;
 
 	/* Power */
+	/* Set regmap to null to avoid regmap access in the pm_runtime_resume
+	 * callback. The regmap will be allocated soon after the power is
+	 * turned on. */
+	lockamp->regmap = NULL;
 	pm_runtime_set_autosuspend_delay(&pdev->dev, 3000);
 	pm_runtime_use_autosuspend(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
-	result = pm_runtime_get_sync(&pdev->dev);
-	if (result < 0) {
+	ret = pm_runtime_get_sync(&pdev->dev);
+	if (ret < 0) {
 		dev_err(lockamp->dev, "Failed to get pm runtime\n");
 		goto out_pm_enable;
 	}
-	result = 0;
+	ret = 0;
 
 	/* Adc buffer */
 	lockamp->adc_buffer = devm_kmalloc(lockamp->dev, LOCKAMP_ADC_SAMPLES_SIZE, GFP_KERNEL);
 	if (NULL == lockamp->adc_buffer) {
         dev_err(lockamp->dev, "Failed to allocate adc buffer.\n");
-		result = -ENOMEM;
+		ret = -ENOMEM;
+		goto out_pm_get;
+	}
+
+	/* Regmap */
+	lockamp->regmap = devm_regmap_init_mmio(lockamp->dev, lockamp->control,
+	                                        &lockamp_regmap_config);
+	if (IS_ERR(lockamp->regmap)) {
+		dev_err(lockamp->dev, "Failed to initialize regmap: %ld\n",
+		        PTR_ERR(lockamp->regmap));
+		ret = PTR_ERR(lockamp->regmap);
 		goto out_pm_get;
 	}
 
@@ -219,15 +287,23 @@ static int lockamp_probe(struct platform_device *pdev)
 	atomic_set(&lockamp->desyncs, 0);
 
 	/* Set hardware defaults */
-	lockamp_set_filter_coefficients(lockamp, lockamp_fir_coefs[0]);
+	ret = lockamp_set_fir_coefs(lockamp, lockamp_fir_coefs[0]);
+	if (ret < 0) {
+		dev_err(lockamp->dev, "Failed to set FIR filter coefficients: %d\n", ret);
+		goto out_pm_get;
+	}
 
 	/* Welcome message */
-	version = lockamp_version(lockamp);
+	ret = lockamp_version(lockamp, &version);
+	if (ret < 0) {
+		dev_err(lockamp->dev, "Failed to get hardware version: %d\n", ret);
+		goto out_pm_get;
+	}
 	dev_info(lockamp->dev, "Probe success (hw_version:%x)\n", version);
 
 	pm_runtime_put(&pdev->dev); /* ignore return value */
 
-	return result;
+	return ret;
 
 out_pm_get:
 	pm_runtime_put(&pdev->dev); /* ignore return value */
@@ -241,7 +317,7 @@ out_chrdev:
 	unregister_chrdev_region(lockamp->chrdev_no, 1);
 out_sbuf:
 	vfree(lockamp->signal_buf.buf);
-	return result;
+	return ret;
 }
 
 static int lockamp_remove(struct platform_device *pdev)
@@ -273,18 +349,18 @@ static struct platform_driver lockamp_driver = {
 
 static int __init lockamp_module_init(void)
 {
-	int result = 0;
+	int ret = 0;
 	/* Class (create /sys/class/ entry) */
 	lockamp_class = class_create(THIS_MODULE, LOCKAMP_CLASS_NAME);
 	if (IS_ERR(lockamp_class)) {
 		pr_err(LOCKAMP_CLASS_NAME ": Failed to create class.\n");
-		result = PTR_ERR(lockamp_class);
+		ret = PTR_ERR(lockamp_class);
 		goto out;
 	}
 	lockamp_class->dev_groups = lockamp_attr_groups;
 	/* Register platform driver */
-	result = platform_driver_register(&lockamp_driver);
-	if (0 != result) {
+	ret = platform_driver_register(&lockamp_driver);
+	if (ret < 0) {
 		pr_err(LOCKAMP_CLASS_NAME ": Failed to register platform driver.\n");
 		goto out_class;
 	}
@@ -292,7 +368,7 @@ static int __init lockamp_module_init(void)
 out_class:
 	class_destroy(lockamp_class);
 out:
-	return result;
+	return ret;
 }
 module_init(lockamp_module_init);
 

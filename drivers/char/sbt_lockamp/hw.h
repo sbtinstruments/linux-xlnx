@@ -61,11 +61,12 @@ extern struct lockamp_gen_control LOCKAMP_GEN2_CONTROL;
 
 void lockamp_reset(struct lockamp *lockamp);
 
-static inline u32 lockamp_version(struct lockamp *lockamp)
+static inline int lockamp_version(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_VERSION);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_VERSION, value);
 }
 
+/* Raw read (not through regmap) */
 static inline u32 lockamp_fifo_size_s32(struct lockamp *lockamp)
 {
 	return ioread32(lockamp->control + LOCKAMP_REG_FIFO_SIZE);
@@ -99,154 +100,214 @@ static inline int lockamp_adjust_gen_scale(s32* scale)
 	return 0;
 }
 
-static inline s32 lockamp_get_gen_scale(struct lockamp *lockamp, struct lockamp_gen_control *gen)
+static inline int lockamp_get_gen_scale(struct lockamp *lockamp,
+                                        struct lockamp_gen_control *gen,
+                                        u32 *value)
 {
-	return ioread32(lockamp->control + gen->scale) >> 14; /* Only 18 MSB are used */
+	int ret = regmap_read(lockamp->regmap, gen->scale, value);
+	if (ret < 0) {
+		return ret;
+	}
+	/* Only 18 MSB are used */
+	*value >>= 14;
+	return 0;
 }
 
-static inline void lockamp_set_gen_scale(struct lockamp *lockamp, struct lockamp_gen_control *gen, u32 value)
+static inline int lockamp_set_gen_scale(struct lockamp *lockamp,
+                                        struct lockamp_gen_control *gen,
+                                        u32 value)
 {
-	iowrite32(value << 14, lockamp->control + gen->scale); /* Only 18 MSB are used */
+	/* Only 18 MSB are used */
+	value <<= 14;
+	return regmap_write(lockamp->regmap, gen->scale, value);
 }
 
-static inline u32 lockamp_get_gen_step_int(struct lockamp *lockamp, struct lockamp_gen_control *gen)
+static inline int lockamp_get_gen_step_int(struct lockamp *lockamp,
+                                           struct lockamp_gen_control *gen,
+                                           u32 *value)
 {
-	return ioread32(lockamp->control + gen->step_int);
+	return regmap_read(lockamp->regmap, gen->step_int, value);
 }
 
-static inline void lockamp_set_gen_step_int(struct lockamp *lockamp, struct lockamp_gen_control *gen, u32 value)
+static inline int lockamp_set_gen_step_int(struct lockamp *lockamp,
+                                           struct lockamp_gen_control *gen,
+                                           u32 value)
 {
-	iowrite32(value, lockamp->control + gen->step_int);
+	return regmap_write(lockamp->regmap, gen->step_int, value);
 }
 
-static inline u16 lockamp_get_gen_step_frac(struct lockamp *lockamp, struct lockamp_gen_control *gen)
+static inline int lockamp_get_gen_step_frac(struct lockamp *lockamp,
+                                            struct lockamp_gen_control *gen,
+                                            u16 *value)
 {
-	return ioread16(lockamp->control + gen->step_frac);
+	return regmap_raw_read(lockamp->regmap, gen->step_frac, value, sizeof(u16));
 }
 
-static inline void lockamp_set_gen_step_frac(struct lockamp *lockamp, struct lockamp_gen_control *gen, u16 value)
+static inline int lockamp_set_gen_step_frac(struct lockamp *lockamp,
+                                            struct lockamp_gen_control *gen,
+                                            u16 value)
 {
-	iowrite16(value, lockamp->control + gen->step_frac);
+	return regmap_raw_write(lockamp->regmap, gen->step_frac, &value, sizeof(u16));
 }
 
-static inline u32 lockamp_get_gen_lock_phase(struct lockamp *lockamp, struct lockamp_gen_control *gen)
+static inline int lockamp_get_gen_lock_phase(struct lockamp *lockamp,
+                                             struct lockamp_gen_control *gen,
+                                             u32 *value)
 {
-	return ioread32(lockamp->control + gen->lock_phase);
+	return regmap_read(lockamp->regmap, gen->lock_phase, value);
 }
 
-static inline void lockamp_set_gen_lock_phase(struct lockamp *lockamp, struct lockamp_gen_control *gen, u32 value)
+static inline int lockamp_set_gen_lock_phase(struct lockamp *lockamp,
+                                             struct lockamp_gen_control *gen,
+                                             u32 value)
 {
-	iowrite32(value, lockamp->control + gen->lock_phase);
+	return regmap_write(lockamp->regmap, gen->lock_phase, value);
 }
 
-static inline u32 lockamp_get_ma_length(struct lockamp *lockamp)
+static inline int lockamp_get_ma_length(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_MA_LENGTH);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_MA_LENGTH, value);
 }
 
-static inline void lockamp_set_ma_length(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_ma_length(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_MA_LENGTH);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_MA_LENGTH, value);
 }
 
-static inline u32 lockamp_get_ma_scale(struct lockamp *lockamp)
+static inline int lockamp_get_ma_scale(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_MA_SCALE);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_MA_SCALE, value);
 }
 
-static inline void lockamp_set_ma_scale(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_ma_scale(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_MA_SCALE);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_MA_SCALE, value);
 }
 
-static inline u32 lockamp_get_cic_length(struct lockamp *lockamp)
+static inline int lockamp_get_cic_length(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_CIC_LENGTH);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_CIC_LENGTH, value);
 }
 
-static inline void lockamp_set_cic_length(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_cic_length(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_CIC_LENGTH);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_CIC_LENGTH, value);
 }
 
-static inline u32 lockamp_get_cic_scale(struct lockamp *lockamp)
+static inline int lockamp_get_cic_scale(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_CIC_SCALE);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_CIC_SCALE, value);
 }
 
-static inline void lockamp_set_cic_scale(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_cic_scale(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_CIC_SCALE);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_CIC_SCALE, value);
 }
 
-static inline u32 lockamp_get_dac_data_bits(struct lockamp *lockamp)
+static inline int lockamp_get_dac_data_bits(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_DAC_DATA_BITS);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_DAC_DATA_BITS, value);
 }
 
-static inline void lockamp_set_dac_data_bits(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_dac_data_bits(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_DAC_DATA_BITS);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_DAC_DATA_BITS, value);
 }
 
-static inline s32 lockamp_get_debug_control(struct lockamp *lockamp)
+static inline int lockamp_get_debug_control(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_DEBUG_CONTROL, value);
 }
 
-static inline void lockamp_set_debug_control(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_debug_control(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_DEBUG_CONTROL, value);
 }
 
-static inline s32 lockamp_get_debug1(struct lockamp *lockamp)
+static inline int lockamp_get_debug1(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_CONFIG_CONTROL);
+	return regmap_read(lockamp->regmap, LOCKAMP_REG_CONFIG_CONTROL, value);
 }
 
-static inline void lockamp_set_debug1(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_debug1(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_CONFIG_CONTROL);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_CONFIG_CONTROL, value);
 }
 
-static inline u32 lockamp_get_fir_cycles(struct lockamp *lockamp)
+static inline int lockamp_get_fir_cycles(struct lockamp *lockamp, u32 *value)
 {
-	return ioread32(lockamp->control + LOCKAMP_REG_FIR_CYCLES) & 0b111111111;
+	int ret;
+	ret = regmap_read(lockamp->regmap, LOCKAMP_REG_FIR_CYCLES, value);
+	if (ret < 0) {
+		return ret;
+	}
+	/* Only the 9 LSBs are used */
+	*value &= 0b111111111;
+	return 0;
 }
 
-static inline void lockamp_set_fir_cycles(struct lockamp *lockamp, u32 value)
+static inline int lockamp_set_fir_cycles(struct lockamp *lockamp, u32 value)
 {
-	iowrite32(value, lockamp->control + LOCKAMP_REG_FIR_CYCLES);
+	/* Only the 9 LSBs are used */
+	value &= 0b111111111;
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_FIR_CYCLES, value);
 }
 
-u32 lockamp_get_decimation(struct lockamp *lockamp);
+int lockamp_get_decimation(struct lockamp *lockamp, u32 *value);
 int lockamp_set_decimation(struct lockamp *lockamp, u32 value);
 
-static inline unsigned int lockamp_get_time_step_ns(struct lockamp *lockamp)
+static inline int lockamp_get_time_step_ns(struct lockamp *lockamp, unsigned int *value)
 {
-	return lockamp_get_decimation(lockamp) * LOCKAMP_BASE_TIME_STEP;
+	u32 decimation;
+	int ret = lockamp_get_decimation(lockamp, &decimation);
+	if (ret < 0) {
+		return ret;
+	}
+	*value = LOCKAMP_BASE_TIME_STEP * decimation;
+	return 0;
 }
 
-static inline u64 lockamp_get_duration_ns(struct lockamp *lockamp, size_t size_n)
+static inline int lockamp_get_duration_ns(struct lockamp *lockamp, size_t size_n, u64 *value)
 {
-	return lockamp_get_time_step_ns(lockamp) * size_n;
+	unsigned int time_step_ns;
+	int ret = lockamp_get_time_step_ns(lockamp, &time_step_ns);
+	if (ret < 0) {
+		return ret;
+	}
+	*value = time_step_ns * size_n;
+	return 0;
 }
 
-static inline unsigned long lockamp_get_read_delay_ns(struct lockamp *lockamp)
+/* The time it takes to read half of the FIFO. */
+static inline int lockamp_get_read_delay_ns(struct lockamp *lockamp, unsigned long *value)
 {
-	/* The time it takes to read half of the FIFO. */
-	return LOCKAMP_FIFO_CAPACITY_N / 2 * lockamp_get_time_step_ns(lockamp);
+	unsigned int time_step_ns;
+	int ret = lockamp_get_time_step_ns(lockamp, &time_step_ns);
+	if (ret < 0) {
+		return ret;
+	}
+	*value = LOCKAMP_FIFO_CAPACITY_N / 2 * time_step_ns;
+	return 0;
 }
 
-static inline void lockamp_reset_ma_filter(struct lockamp *lockamp)
+static inline int lockamp_reset_ma_filter(struct lockamp *lockamp)
 {
-	u32 orig = ioread32(lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
-	u32 modi = orig | LOCKAMP_MA_RESET_BIT;
-	dev_info(lockamp->dev, "debug_control: %d\n", orig);
-	iowrite32(modi, lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
-	iowrite32(orig, lockamp->control + LOCKAMP_REG_DEBUG_CONTROL);
+	int ret;
+	/* Assert reset pin */
+	ret = regmap_update_bits(lockamp->regmap, LOCKAMP_REG_DEBUG_CONTROL,
+	                         LOCKAMP_MA_RESET_BIT, LOCKAMP_MA_RESET_BIT);
+	if (ret < 0) {
+		return 0;
+	}
+	/* Arbitrary delay */
+	msleep(1);
+	/* Deassert reset pin */
+	ret = regmap_update_bits(lockamp->regmap, LOCKAMP_REG_DEBUG_CONTROL,
+	                         LOCKAMP_MA_RESET_BIT, 0x0);
+	return ret;
 }
 
+/* Raw read (not through regmap) */
 static inline s32 lockamp_fifo_pop(struct lockamp *lockamp)
 {
 #ifdef CONFIG_SBT_LOCKAMP_FIFO_POP_RELAXED
@@ -256,10 +317,11 @@ static inline s32 lockamp_fifo_pop(struct lockamp *lockamp)
 #endif
 }
 
+/* Raw read (not through regmap) */
 static __maybe_unused inline s32 lockamp_fifo_pop_dbg(struct lockamp *lockamp)
 {
 	u32 raw;
-	s32 result; /* signed, so that right-shifts will be arithmetic */
+	s32 ret; /* signed, so that right-shifts will be arithmetic */
 #ifdef CONFIG_SBT_LOCKAMP_FIFO_POP_RELAXED
 	raw = readl_relaxed(lockamp->control + LOCKAMP_REG_FIFO_DATA);
 #else
@@ -270,7 +332,7 @@ static __maybe_unused inline s32 lockamp_fifo_pop_dbg(struct lockamp *lockamp)
 	 * does a reinterpretative cast. I.e., all bits are unchanged and only
 	 * the interpretation of the bits is changed (from unsigned to signed).
 	 */
-	result = raw << 3;
+	ret = raw << 3;
 	/* After nulling the debug bits, we need to right-shift bits 0:28 back
 	 * into place. Furthermore, said bits must be sign-extended during the
 	 * shift. We use a bitwise right-shift to do the sign extension. Note
@@ -279,8 +341,8 @@ static __maybe_unused inline s32 lockamp_fifo_pop_dbg(struct lockamp *lockamp)
 	 * arm-linux-gnueabihf.
 	 * Reference: https://stackoverflow.com/a/7636/554283
 	 */
-	result >>= 3;
-	return result;
+	ret >>= 3;
+	return ret;
 }
 
 static inline void lockamp_fifo_pop_sample(struct lockamp *lockamp, struct sample *s)
@@ -297,7 +359,7 @@ static inline void lockamp_fifo_pop_sample(struct lockamp *lockamp, struct sampl
 }
 
 extern size_t lockamp_fifo_move_to_sbuf(struct lockamp *lockamp);
-extern void lockamp_set_filter_coefficients(struct lockamp *lockamp, const s32 *coefs);
+extern int lockamp_set_fir_coefs(struct lockamp *lockamp, const s32 *coefs);
 extern void lockamp_get_adc_samples(struct lockamp *lockamp, s32 *adc_samples);
 
 #endif /* _LOCKAMP_HW_H_ */
