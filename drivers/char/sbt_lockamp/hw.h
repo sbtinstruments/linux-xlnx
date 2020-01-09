@@ -278,7 +278,7 @@ static inline int lockamp_get_time_step_ns(struct lockamp *lockamp, unsigned int
 	/* The data time step depends on three things:
 	 *   1) The input clock (125 MHz freq; 8 ns time step)
 	 *   2) The length of the CIC filter
-	 *   3) The number of half bands filters (indirectly, the so-called
+	 *   3) The number of half band filters (indirectly, the so-called
 	 *      decimation factor).
 	 */
 	*value = LOCKAMP_BASE_TIME_STEP * cic_length * decimation;
