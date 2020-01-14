@@ -238,8 +238,11 @@ static int lockamp_probe(struct platform_device *pdev)
 		goto out_device;
 	}
 
-	/* Vs regulator for the injection amp */
-	lockamp->amp_supply = devm_regulator_get(&pdev->dev, "amp");
+	/* Vs regulator for the injection amp
+	 *
+	 * We need exclusive ownership of the regulator so that we can enforce
+	 * the "amp_supply_force_off" logic. */
+	lockamp->amp_supply = devm_regulator_get_exclusive(&pdev->dev, "amp");
 	if (IS_ERR(lockamp->amp_supply)) {
 		dev_err(lockamp->dev, "Failed to get 'amp' regulator.\n");
 		ret = PTR_ERR(lockamp->amp_supply);
