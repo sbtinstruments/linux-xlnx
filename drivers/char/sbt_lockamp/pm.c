@@ -73,7 +73,12 @@ static int lockamp_pm_runtime_suspend(struct device *dev)
 		dev_err(dev, "Failed to disable the AD/DA converters: %d\n", ret);
 		return ret;
 	}
-	if (!lockamp->amp_supply_force_off) {
+	/* We have exclusive ownership of the regulator, so the regulator is
+	 * enabled iff we enabled it in this driver.
+	 *
+	 * The regulator is eanbled and we are not forcing it off... */
+	if (regulator_is_enabled(lockamp->amp_supply) && !lockamp->amp_supply_force_off) {
+		/* ...so we disable the regulator right away. */
 		ret = regulator_disable(lockamp->amp_supply);
 		if (ret < 0) {
 			dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
@@ -87,17 +92,11 @@ static int lockamp_pm_runtime_suspend(struct device *dev)
 static int lockamp_pm_runtime_resume(struct device *dev)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
-	int ret = lockamp_enable_converters(dev, true);
+	int ret;
+	ret = lockamp_enable_converters(dev, true);
 	if (ret < 0) {
 		dev_err(dev, "Failed to enable the AD/DA converters: %d\n", ret);
 		return ret;
-	}
-	if (!lockamp->amp_supply_force_off) {
-		ret = regulator_enable(lockamp->amp_supply);
-		if (ret < 0) {
-			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
-			return ret;
-		}
 	}
 	/* During a power off, the lock-in amplifier will not get clock input from
 	 * the ADC. In turn, this corrupts the FPGA state (e.g., the MA filter's
@@ -117,6 +116,18 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 		ret = regcache_sync(lockamp->regmap);
 		if (ret < 0) {
 			dev_err(dev, "Failed to sync regmap cache on resume: %d\n", ret);
+			return ret;
+		}
+	}
+	/* We have exclusive ownership of the regulator, so the regulator is
+	 * enabled iff we enabled it in this driver.
+	 *
+	 * The regulator is disabled and we are not forcing it off... */
+	if (!regulator_is_enabled(lockamp->amp_supply) && !lockamp->amp_supply_force_off) {
+		/* ...so we enable the regulator right away. */
+		ret = regulator_enable(lockamp->amp_supply);
+		if (ret < 0) {
+			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
 			return ret;
 		}
 	}
