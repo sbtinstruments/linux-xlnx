@@ -157,8 +157,37 @@ static int tmc2100_set_velocity(struct device *dev, int velocity)
 	return 0;
 }
 
+/**
+ * @abs_torque unitless value between 0 and 100
+ */
+static int tmc2100_get_abs_torque(struct device *dev, unsigned* abs_torque)
+{
+	struct tmc2100 *tmc = dev_get_drvdata(dev);
+	/* Convert [VOL_MIN; VOL_MAX] to [0; 100]  */
+	unsigned diff = (TMC2100_REF_VOLTAGE_LOGICAL_MAX - TMC2100_REF_VOLTAGE_LOGICAL_MIN);
+	unsigned voltage_uv = regulator_get_voltage(tmc->ref);
+	unsigned voltage_mv = voltage_uv / 1000;
+	*abs_torque = min(100u, (voltage_mv - TMC2100_REF_VOLTAGE_LOGICAL_MIN) * 100u / diff);
+	return 0;
+}
+
+/**
+ * @abs_torque unitless value between 0 and 100
+ */
+static int tmc2100_set_abs_torque(struct device *dev, unsigned abs_torque)
+{
+	struct tmc2100 *tmc = dev_get_drvdata(dev);
+	/* Convert [0; 100] to [VOL_MIN; VOL_MAX] */
+	unsigned diff = (TMC2100_REF_VOLTAGE_LOGICAL_MAX - TMC2100_REF_VOLTAGE_LOGICAL_MIN);
+	unsigned voltage_mv = (diff * abs_torque) / 100 + TMC2100_REF_VOLTAGE_LOGICAL_MIN;
+	unsigned voltage_uv = voltage_mv * 1000;
+	return regulator_set_voltage(tmc->ref, voltage_uv, voltage_uv);
+}
+
 static struct stepper_ops tmc2100_ops = {
 	.set_velocity = tmc2100_set_velocity,
+	.get_abs_torque = tmc2100_get_abs_torque,
+	.set_abs_torque = tmc2100_set_abs_torque,
 };
 
 static int tmc2100_get_gpios(struct tmc2100 *tmc, struct platform_device *pdev)
