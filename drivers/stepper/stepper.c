@@ -97,6 +97,28 @@ out:
 	return result;
 }
 
+static int stepper_validate_abs_torque(struct stepper_device *stepdev, unsigned abs_torque)
+{
+	return (abs_torque <= 100) ? 0 : -EINVAL;
+}
+
+static int stepper_get_abs_torque(struct stepper_device *stepdev, unsigned* abs_torque)
+{
+	struct stepper_ops *ops = &stepdev->ops;
+	return ops->get_abs_torque(&stepdev->dev, abs_torque);
+}
+
+static int stepper_set_abs_torque(struct stepper_device *stepdev, unsigned abs_torque)
+{
+	int ret = 0;
+	struct stepper_ops *ops = &stepdev->ops;
+	ret = stepper_validate_abs_torque(stepdev, abs_torque);
+	if (0 != ret) {
+		return ret;
+	}
+	return ops->set_abs_torque(&stepdev->dev, abs_torque);
+}
+
 /* velocity_current */
 static ssize_t velocity_current_show(
 	struct device *dev,
@@ -184,6 +206,41 @@ static ssize_t velocity_max_show(
 }
 DEVICE_ATTR(velocity_max, S_IRUGO, velocity_max_show, NULL);
 
+/* abs_torque */
+static ssize_t abs_torque_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	int result;
+	unsigned value;
+	struct stepper_device *stepdev = to_stepper_device(dev);
+	result = stepper_get_abs_torque(stepdev, &value);
+	if (0 != result)
+		return result;
+	result = scnprintf(buf, PAGE_SIZE, "%d\n", value);
+	if (0 != result)
+		return result;
+	return result;
+}
+static ssize_t abs_torque_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	unsigned value;
+	int result = kstrtouint(buf, 0, &value);
+	struct stepper_device *stepdev = to_stepper_device(dev);
+	if (0 != result)
+		return result;
+	result = stepper_set_abs_torque(stepdev, value);
+	if (0 != result)
+		return result;
+	return count;
+}
+DEVICE_ATTR(abs_torque, S_IRUGO | S_IWUSR, abs_torque_show, abs_torque_store);
+
 /* attribute group */
 static struct attribute *attrs[] = {
 	&dev_attr_velocity_current.attr,
@@ -191,6 +248,7 @@ static struct attribute *attrs[] = {
 	&dev_attr_velocity_target_instant.attr,
 	&dev_attr_velocity_min.attr,
 	&dev_attr_velocity_max.attr,
+	&dev_attr_abs_torque.attr,
 	NULL,
 };
 static struct attribute_group attr_group = {

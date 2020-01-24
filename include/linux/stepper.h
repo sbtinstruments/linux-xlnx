@@ -23,6 +23,8 @@ struct stepper_vel_cfg {
 
 struct stepper_ops {
 	int (*set_velocity)(struct device *dev, int velocity);
+	int (*get_abs_torque)(struct device *dev, unsigned* abs_torque);
+	int (*set_abs_torque)(struct device *dev, unsigned abs_torque);
 };
 
 struct device *
