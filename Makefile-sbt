@@ -1,5 +1,4 @@
 # Cross-compilation
-uboot_tools=/projects/green-mango/firmware/u-boot/tools
 CROSS_COMPILE?=arm-linux-gnueabihf-
 processors=$(shell grep -c ^processor /proc/cpuinfo)
 cflags="-O2 -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard"
@@ -8,7 +7,7 @@ makecmd=CROSS_COMPILE=$(CROSS_COMPILE) $(MAKE) -j $(processors) \
 
 .PHONY: arch/arm/boot/uImage
 arch/arm/boot/uImage: .config
-	PATH=$(PATH):$(uboot_tools) $(makecmd) UIMAGE_LOADADDR=0x8000 uImage
+	$(makecmd) UIMAGE_LOADADDR=0x8000 uImage
 
 modules = drivers/staging/fbtft/fbtft_device.ko \
           drivers/staging/fbtft/flexfb.ko
