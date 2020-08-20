@@ -108,6 +108,19 @@ static int set_var(struct fbtft_par *par)
 	return 0;
 }
 
+void ssd2119_register_backlight(struct fbtft_par *par)
+{
+	struct device *dev = par->info->device;
+	struct backlight_device *bl_dev;
+
+	bl_dev = devm_of_find_backlight(dev);
+	if (IS_ERR(bl_dev)) {
+		dev_err(dev, "Could not find backlight: %ld\n", PTR_ERR(bl_dev));
+		return;
+	}
+	par->info->bl_dev = bl_dev;
+}
+
 static struct fbtft_display display = {
 	.regwidth = 16,
 	.width = 320,
@@ -116,6 +129,7 @@ static struct fbtft_display display = {
 		.init_display = init_display,
 		.set_addr_win = set_addr_win,
 		.set_var = set_var,
+		.register_backlight = ssd2119_register_backlight,
 	},
 };
 
