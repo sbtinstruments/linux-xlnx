@@ -140,6 +140,8 @@ struct fbtft_platform_data {
 	unsigned int fps;
 	int txbuflen;
 	u8 startbyte;
+	bool skip_reset;
+	bool skip_clear;
 	char *gamma;
 	void *extra;
 };
