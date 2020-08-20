@@ -809,17 +809,21 @@ int fbtft_register_framebuffer(struct fb_info *fb_info)
 			goto reg_fail;
 	}
 
-	ret = par->fbtftops.init_display(par);
-	if (ret < 0)
-		goto reg_fail;
-	if (par->fbtftops.set_var) {
-		ret = par->fbtftops.set_var(par);
+	if (!par->pdata->skip_reset) {
+		ret = par->fbtftops.init_display(par);
 		if (ret < 0)
 			goto reg_fail;
+		if (par->fbtftops.set_var) {
+			ret = par->fbtftops.set_var(par);
+			if (ret < 0)
+				goto reg_fail;
+		}
 	}
 
-	/* update the entire display */
-	par->fbtftops.update_display(par, 0, par->info->var.yres - 1);
+	if (!par->pdata->skip_clear) {
+		/* update the entire display */
+		par->fbtftops.update_display(par, 0, par->info->var.yres - 1);
+	}
 
 	if (par->fbtftops.set_gamma && par->gamma.curves) {
 		ret = par->fbtftops.set_gamma(par, par->gamma.curves);
@@ -1165,6 +1169,8 @@ static struct fbtft_platform_data *fbtft_properties_read(struct device *dev)
 	pdata->fps = fbtft_property_value(dev, "fps");
 	pdata->txbuflen = fbtft_property_value(dev, "txbuflen");
 	pdata->startbyte = fbtft_property_value(dev, "startbyte");
+	pdata->skip_reset = of_property_read_bool(node, "linux,skip-reset");
+	pdata->skip_clear = of_property_read_bool(node, "linux,skip-clear");
 	device_property_read_string(dev, "gamma", (const char **)&pdata->gamma);
 
 	if (device_property_present(dev, "led-gpios"))
