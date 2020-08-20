@@ -37,7 +37,7 @@
 
 struct type_b {
 	void __iomem *base;
-	bool skip_panel_init;
+	bool skip_reset;
 };
 
 struct type_b *type_b_from_mipi_dbi(struct mipi_dbi *mipi)
@@ -148,7 +148,7 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 	version = ioread32(type_b->base + MIPI_DBI_B_REG_VERSION);
 	DRM_DEBUG_DRIVER("MIPI DBI Type B HW version: %d\n", version);
 
-	if (type_b->skip_panel_init) {
+	if (type_b->skip_reset) {
 		mipi->enabled = true;
 		return;
 	}
@@ -268,7 +268,7 @@ static int ili9488_probe(struct platform_device *pdev)
 		DRM_DEV_ERROR(dev, "Failed to ioremap 'mipi-dbi-type-b'\n");
 		return PTR_ERR(type_b->base);
 	}
-	type_b->skip_panel_init = of_property_read_bool(dev->of_node, "skip-panel-init");
+	type_b->skip_reset = of_property_read_bool(dev->of_node, "linux,skip-reset");
 
 	ret = mipi_dbi_type_b_init(type_b, mipi);
 	if (ret) {
