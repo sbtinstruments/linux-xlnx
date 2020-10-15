@@ -300,9 +300,11 @@ static struct attribute *attrs[] = {
 	&dev_attr_abs_torque.attr,
 	NULL,
 };
+
 static struct attribute_group attr_group = {
 	.attrs = attrs
 };
+
 static const struct attribute_group *stepper_dev_attr_groups[] = {
 	&attr_group,
 	NULL
