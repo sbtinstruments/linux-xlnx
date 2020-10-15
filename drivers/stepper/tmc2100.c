@@ -5,6 +5,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/string.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 #include <linux/regulator/consumer.h>
@@ -14,22 +15,49 @@
 #define TMC2100_REF_VOLTAGE_LOGICAL_MAX 2500
 #define TMC2100_CFG_SIZE 6 /* Doesn't include cfg6_enn */
 
-struct tmc2100 {
-	struct gpio_desc *cfg[TMC2100_CFG_SIZE];
-	struct gpio_desc *cfg6_enn, *dir, *index, *error;
-	struct pwm_device *step;
-	struct regulator *ref;
-};
-
 enum tmc2100_cfg_state {
-	TMC2100_GND,
+	TMC2100_GND = 0,
 	TMC2100_VCC_IO,
 	TMC2100_OPEN,
+	TMC_CFG_STATE_SIZE,
+};
+
+enum tmc2100_resolution {
+	TMC2100_MS1_N_SPREAD = 0,
+	TMC2100_MS2_N_SPREAD,
+	TMC2100_MS2_Y_SPREAD,
+	TMC2100_MS4_N_SPREAD,
+	TMC2100_MS16_N_SPREAD,
+	TMC2100_MS4_Y_SPREAD,
+	TMC2100_MS16_Y_SPREAD,
+	TMC2100_MS4_Y_STEALTH,
+	TMC2100_MS16_Y_STEALTH,
+	TMC2100_RESOLUTION_SIZE,
+};
+
+const char *const tmc2100_resolution_names[TMC2100_RESOLUTION_SIZE] = {
+	"microstep-1,spread-cycle",
+	"microstep-2,spread-cycle",
+	"microstep-2,interpolation-256,spread-cycle",
+	"microstep-4,spread-cycle",
+	"microstep-16,spread-cycle",
+	"microstep-4,interpolation-256,spread-cycle",
+	"microstep-16,interpolation-256,spread-cycle",
+	"microstep-4,interpolation-256,stealth-chop",
+	"microstep-16,interpolation-256,stealth-chop",
 };
 
 struct tmc2100_state {
 	enum tmc2100_cfg_state cfg[TMC2100_CFG_SIZE];
 	unsigned int ref_voltage; /* mV */
+};
+
+struct tmc2100 {
+	struct gpio_desc *cfg[TMC2100_CFG_SIZE];
+	struct gpio_desc *cfg6_enn, *dir, *index, *error;
+	struct pwm_device *step;
+	struct regulator *ref;
+	struct tmc2100_state state;
 };
 
 static struct stepper_vel_cfg tmc2100_cfg = {
@@ -78,39 +106,43 @@ static struct tmc2100_state tmc2100_default_state = {
 	.ref_voltage = 2500,
 };
 
-static void tmc2100_set_cfg(struct tmc2100 *tmc, int idx, enum tmc2100_cfg_state value)
+static int tmc2100_set_cfg(struct tmc2100 *tmc, int idx, enum tmc2100_cfg_state value)
 {
+	struct gpio_desc *desc;
 	if (TMC2100_CFG_SIZE <= idx) {
-		pr_warn("TMC2100: Invalid CFG index %d. Skipping.\n", idx);
-		return;
+		return -EINVAL;
 	}
+	desc = tmc->cfg[idx];
 	/* The CFG GPIOs are tri-state so they can be set to input and detected
 	 * as open. */
 	switch (value) {
 	case TMC2100_GND:
-		gpiod_direction_output(tmc->cfg[idx], 0);
-		break;
+		return gpiod_direction_output(desc, 0);
 	case TMC2100_VCC_IO:
-		gpiod_direction_output(tmc->cfg[idx], 1);
-		break;
+		return gpiod_direction_output(desc, 1);
 	case TMC2100_OPEN:
-		gpiod_direction_input(tmc->cfg[idx]);
-		break;
+		return gpiod_direction_input(desc);
+	default:
+		return -EINVAL;
 	};
 }
 
-static int tmc2100_apply_state(struct tmc2100 *tmc, struct tmc2100_state *state)
+static int tmc2100_apply_state_to_hw(struct tmc2100 *tmc)
 {
-	int error;
+	int ret;
 	int i;
 	int voltage_uv;
+	struct tmc2100_state *state = &tmc->state;
 	for (i = 0; TMC2100_CFG_SIZE > i; ++i) {
-		tmc2100_set_cfg(tmc, i, state->cfg[i]);
+		ret = tmc2100_set_cfg(tmc, i, state->cfg[i]);
+		if (0 != ret) {
+			return ret;
+		}
 	}
 	voltage_uv = state->ref_voltage * 1000; /* mV to uV */
-	error = regulator_set_voltage(tmc->ref, voltage_uv, voltage_uv);
-	if (error) {
-		return error;
+	ret = regulator_set_voltage(tmc->ref, voltage_uv, voltage_uv);
+	if (ret) {
+		return ret;
 	}
 	return 0;
 }
@@ -265,38 +297,38 @@ static int tmc2100_init_pwms(struct tmc2100 *tmc)
 	return pwm_apply_state(tmc->step, &step_state);
 }
 
-static int tmc2100_init(struct tmc2100 *tmc, struct platform_device *pdev)
+static int tmc2100_init_handles(struct tmc2100 *tmc, struct platform_device *pdev)
 {
-	int err;
-	err = tmc2100_get_gpios(tmc, pdev);
-	if (err) {
-		return err;
+	int ret;
+	ret = tmc2100_get_gpios(tmc, pdev);
+	if (ret) {
+		return ret;
 	}
-	err = tmc2100_get_pwms(tmc, pdev);
-	if (err) {
-		return err;
+	ret = tmc2100_get_pwms(tmc, pdev);
+	if (ret) {
+		return ret;
 	}
-	err = tmc2100_get_regulators(tmc, pdev);
-	if (err) {
-		return err;
+	ret = tmc2100_get_regulators(tmc, pdev);
+	if (ret) {
+		return ret;
 	}
 	gpiod_set_value(tmc->cfg6_enn, 0);
-	err = tmc2100_init_pwms(tmc);
-	if (err) {
-		dev_err(&pdev->dev, "Failed to initialize pwms: %d\n", err);
-		return err;
+	ret = tmc2100_init_pwms(tmc);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to initialize pwms: %d\n", ret);
+		return ret;
 	}
-	err = regulator_enable(tmc->ref);
-	if (err) {
-		dev_err(&pdev->dev, "Failed to enable regulator 'ref': %d\n", err);
-		return err;
+	ret = regulator_enable(tmc->ref);
+	if (ret) {
+		dev_err(&pdev->dev, "Failed to enable regulator 'ref': %d\n", ret);
+		return ret;
 	}
 	return 0;
 }
 
 static int tmc2100_of_get_state(struct device *dev, struct tmc2100_state *state)
 {
-	int result = 0;
+	int ret = 0;
 	int i;
 	struct device_node *of_node = dev->of_node;
 	char cfg_str[5];
@@ -305,7 +337,7 @@ static int tmc2100_of_get_state(struct device *dev, struct tmc2100_state *state)
 	u32 ref_voltage;
 
 	if (NULL == of_node) {
-		return result;
+		return ret;
 	}
 
 	for (i = 0; TMC2100_CFG_SIZE > i; ++i) {
@@ -327,32 +359,107 @@ static int tmc2100_of_get_state(struct device *dev, struct tmc2100_state *state)
 		state->cfg[i] = cfg_state;
 	}
 
-	result = of_property_read_u32(of_node, "ref-voltage", &ref_voltage);
-	if (result == -EINVAL) {
+	ret = of_property_read_u32(of_node, "ref-voltage", &ref_voltage);
+	if (ret == -EINVAL) {
 		/* ref-voltage was not set in the device tree. Ignore. */
-		result = 0;
+		ret = 0;
 	} else {
 		/* the given ref-voltage is not within spec */
-		if (result || TMC2100_REF_VOLTAGE_LOGICAL_MAX < ref_voltage
+		if (ret || TMC2100_REF_VOLTAGE_LOGICAL_MAX < ref_voltage
 				|| TMC2100_REF_VOLTAGE_LOGICAL_MIN > ref_voltage) {
 			dev_warn(dev, "Invalid ref_voltage: %d. Must be between %d and %d. Using default.\n",
 		             ref_voltage, TMC2100_REF_VOLTAGE_LOGICAL_MIN,
 		             TMC2100_REF_VOLTAGE_LOGICAL_MAX);
-			result = 0; /* Ignore the error since we are simply using the default */
+			ret = 0; /* Ignore the error since we are simply using the default */
 		} else {
 			state->ref_voltage = ref_voltage;
 		}
 	}
 
-	return result;
+	return ret;
 }
+
+static int tmc2100_get_resolution(struct tmc2100 *tmc, enum tmc2100_resolution *res)
+{
+	/* 2D table look-up */
+	*res = tmc->state.cfg[2] * TMC_CFG_STATE_SIZE + tmc->state.cfg[1];
+	return 0;
+}
+
+static int tmc2100_set_resolution(struct tmc2100 *tmc, enum tmc2100_resolution res)
+{
+	int ret;
+	enum tmc2100_cfg_state cfg1, cfg2;
+	/* Inverse 2D table look-up */
+	cfg2 = res / TMC_CFG_STATE_SIZE;
+	cfg1 = res % TMC_CFG_STATE_SIZE;
+	/* Apply state */
+	ret = tmc2100_set_cfg(tmc, 1, cfg1);
+	if (ret != 0)
+		return ret;
+	tmc->state.cfg[1] = cfg1;
+	ret = tmc2100_set_cfg(tmc, 2, cfg2);
+	if (ret != 0)
+		return ret;
+	tmc->state.cfg[2] = cfg2;
+	return 0;
+}
+
+/* resolution */
+static ssize_t tmc2100_resolution_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	int ret;
+	enum tmc2100_resolution res;
+	const char *res_name;
+	struct tmc2100 *tmc = dev_get_drvdata(dev);
+	ret = tmc2100_get_resolution(tmc, &res);
+	if (0 != ret)
+		return ret;
+	res_name = tmc2100_resolution_names[res];
+	ret = scnprintf(buf, PAGE_SIZE, "%s\n", res_name);
+	if (0 != ret)
+		return ret;
+	return ret;
+}
+static ssize_t tmc2100_resolution_store(
+	struct device *dev,
+	struct device_attribute *attr,
+	const char *buf,
+	size_t count)
+{
+	int ret;
+	struct tmc2100 *tmc = dev_get_drvdata(dev);
+	ret = sysfs_match_string(tmc2100_resolution_names, buf);
+	if (0 > ret)
+		return ret;
+	ret = tmc2100_set_resolution(tmc, ret);
+	if (0 != ret)
+		return ret;
+	return count;
+}
+DEVICE_ATTR(resolution, S_IRUGO | S_IWUSR, tmc2100_resolution_show, tmc2100_resolution_store);
+
+static struct attribute *tmc2100_attrs[] = {
+	&dev_attr_resolution.attr,
+	NULL
+};
+
+static const struct attribute_group tmc2100_attr_group = {
+	.attrs = tmc2100_attrs,
+};
+
+/* TODO: Replace tmc2100_attr_group with ATTRIBUTE_GROUPS when
+ * we get kernel support for .dev_groups */
+/* ATTRIBUTE_GROUPS(tmc2100); */
 
 static int tmc2100_probe(struct platform_device *pdev)
 {
-	int result;
+	int ret;
 	struct tmc2100 *tmc;
 	struct device *classdev;
-	struct tmc2100_state state = tmc2100_default_state;
 
 	tmc = devm_kzalloc(&pdev->dev, sizeof(*tmc), GFP_KERNEL);
 	if (NULL == tmc) {
@@ -360,21 +467,39 @@ static int tmc2100_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	result = tmc2100_init(tmc, pdev);
-	if (0 != result) {
+	/* So that we can access the tmc2100 struct from, e.g., sysfs attributes */
+	dev_set_drvdata(&pdev->dev, tmc);
+
+	/* Get GPIOs, PWMs, regulators, etc. */
+	ret = tmc2100_init_handles(tmc, pdev);
+	if (0 != ret) {
 		dev_err(&pdev->dev, "Failed to initialize %s.\n", pdev->name);
-		return result;
+		return ret;
 	}
 
-	result = tmc2100_of_get_state(&pdev->dev, &state);
-	if (0 != result) {
+	/* Set the default state.
+	 * Note that we haven't applied this state to the hardware yet. */
+	tmc->state = tmc2100_default_state;
+
+	/* Get state modifications from the device tree */
+	ret = tmc2100_of_get_state(&pdev->dev, &tmc->state);
+	if (0 != ret) {
 		dev_err(&pdev->dev, "Failed to get OF state.\n");
-		return result;
+		return ret;
 	}
-	result = tmc2100_apply_state(tmc, &state);
-	if (0 != result) {
+
+	/* Now we apply the state to the HW. After this call, the state of the
+	 * HW is synchronized with the state in the tmc2100 struct. */
+	ret = tmc2100_apply_state_to_hw(tmc);
+	if (0 != ret) {
 		dev_err(&pdev->dev, "Failed to apply state.\n");
-		return result;
+		return ret;
+	}
+
+	ret = devm_device_add_group(&pdev->dev, &tmc2100_attr_group);
+	if (0 != ret) {
+		dev_err(&pdev->dev, "Failed to add sysfs group: %d.\n", ret);
+		return ret;
 	}
 
 	classdev = devm_stepper_device_register(&pdev->dev, pdev->name, tmc,
@@ -398,6 +523,9 @@ static struct platform_driver tmc2100_driver = {
 	.driver = {
 		.name = "tmc2100",
 		.of_match_table = of_match_ptr(of_tmc2100_match),
+		/* TODO: Use .dev_groups instead of the devm_device_add_group call
+		 * in the probe function when we get kernel support for .dev_groups */
+		/* .dev_groups	= tmc2100_groups, */
 	},
 };
 
