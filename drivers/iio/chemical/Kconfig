@@ -86,6 +86,17 @@ config SENSIRION_SGP30
 	  To compile this driver as module, choose M here: the
 	  module will be called sgp30.
 
+config SINDRI_SENSOR
+	tristate "Sindri electrical conductivity sensor"
+	depends on I2C
+	select REGMAP_I2C
+	select IIO_BUFFER
+	select IIO_TRIGGERED_BUFFER
+	select IRQ_WORK
+	help
+	 Say Y here to build I2C interface support for the following
+	 Sindri electrical conductivity sensor board by SBT Instruments.
+
 config SPS30
 	tristate "SPS30 particulate matter sensor"
 	depends on I2C
