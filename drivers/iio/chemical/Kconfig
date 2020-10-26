@@ -61,6 +61,17 @@ config IAQCORE
 	  iAQ-Core Continuous/Pulsed VOC (Volatile Organic Compounds)
 	  sensors
 
+config SINDRI_SENSOR
+	tristate "Sindri electrical conductivity sensor"
+	depends on I2C
+	select REGMAP_I2C
+	select IIO_BUFFER
+	select IIO_TRIGGERED_BUFFER
+	select IRQ_WORK
+	help
+	 Say Y here to build I2C interface support for the following
+	 Sindri electrical conductivity sensor board by SBT Instruments.
+
 config VZ89X
 	tristate "SGX Sensortech MiCS VZ89X VOC sensor"
 	depends on I2C
