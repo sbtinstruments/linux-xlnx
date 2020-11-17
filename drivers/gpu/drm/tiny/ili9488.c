@@ -37,7 +37,7 @@
 
 struct type_b {
 	void __iomem *base;
-	bool skip_reset;
+	bool skip_initial_reset;
 };
 
 struct type_b *type_b_from_mipi_dbi(struct mipi_dbi *mipi)
@@ -131,9 +131,9 @@ static void mipi_dbi_type_b_hw_reset(struct mipi_dbi *mipi)
 {
 	struct type_b *type_b = type_b_from_mipi_dbi(mipi);
 	iowrite32(MIPI_DBI_B_CONTROL_RESET, type_b->base + MIPI_DBI_B_REG_CONTROL);
-	mdelay(10);
+	msleep(10);
 	iowrite32(0, type_b->base + MIPI_DBI_B_REG_CONTROL);
-	mdelay(120);
+	msleep(120);
 }
 
 static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
@@ -148,57 +148,67 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 	version = ioread32(type_b->base + MIPI_DBI_B_REG_VERSION);
 	DRM_DEBUG_DRIVER("MIPI DBI Type B HW version: %d\n", version);
 
-	if (type_b->skip_reset) {
-		mipi->enabled = true;
-		return;
+	/* Sometimes, the boot loader does the initial reset. E.g., to show
+	 * a splash screen before Linux boots. To avoid resetting twice
+	 * (and potentially undo the work of the boot loader) we do a
+	 * simple check here. */
+	if (type_b->skip_initial_reset) {
+		type_b->skip_initial_reset = false;
+		goto out_enable_flush;
 	}
 
-	/* reset */
+	if (mipi_dbi_display_is_on(mipi)) {
+		goto out_enable_flush;
+	}
+
+	/* Hardware reset */
 	mipi_dbi_type_b_hw_reset(mipi);
 	mipi_dbi_command(mipi, MIPI_DCS_SOFT_RESET);
-	mdelay(120);
+	msleep(120);
 
-	/* display off */
+	/*** Apply settings ***/
+	/* Display off */
 	mipi_dbi_command(mipi, MIPI_DCS_SET_DISPLAY_OFF);
-	/* positive gamma control */
+	/* Positive gamma control */
 	mipi_dbi_command(mipi, 0xE0, 0x00, 0x03, 0x09, 0x08, 0x16, \
 			0x0A, 0x3F, 0x78, 0x4C, 0x09, 0x0A, \
 			0x08, 0x16, 0x1A, 0x0F);
-	/* negative gamma control */
+	/* Negative gamma control */
 	mipi_dbi_command(mipi, 0xE1, 0x00, 0x16, 0x19, 0x03, 0x0F, \
 			0x05, 0x32, 0x45, 0x46, 0x04, 0x0E, \
 			0x0D, 0x35, 0x37, 0x0F);
-	/* power control 1 */
+	/* Power control 1 */
 	mipi_dbi_command(mipi, 0xC0, 0x17, 0x15);
-	/* power control 2 */
+	/* Power control 2 */
 	mipi_dbi_command(mipi, 0xC1, 0x41);
 	/* VCOM control 1 */
 	mipi_dbi_command(mipi, 0xC5, 0x00, 0x12, 0x80);
-	/* memory access control: MX and BGR */
+	/* Memory access control: MX and BGR */
 	mipi_dbi_command(mipi, MIPI_DCS_SET_ADDRESS_MODE, 0x48);
-	/* pixel interchange format: RGB565 over MIPI 16 bit */
+	/* Pixel interchange format: RGB565 over MIPI 16 bit */
 	mipi_dbi_command(mipi, MIPI_DCS_SET_PIXEL_FORMAT,
 	                 ILI9488_DBI_16_BPP | (ILI9488_DPI_16_BPP << 4));
-	/* interface mode control */
+	/* Interface mode control */
 	mipi_dbi_command(mipi, 0xB0, 0x00);
-	/* frame rate control (0x01 is 30.38 Hz; 0xA0 is 60.76 Hz) */
+	/* Frame rate control (0x01 is 30.38 Hz; 0xA0 is 60.76 Hz) */
 	mipi_dbi_command(mipi, ILI9488_CMD_FRAME_RATE_CONTROL, 0xA0);
-	/* display inversion ON */
+	/* Display inversion ON */
 	mipi_dbi_command(mipi, 0x21);
-	/* display inversion control */
+	/* Display inversion control */
 	mipi_dbi_command(mipi, ILI9488_CMD_DISPLAY_INVERSION_CONTROL,
                      ILI9488_DINV_2_DOT_INVERSION);
-	/* write CTRL display value (brightness, dimming, backlight) */
+	/* Write CTRL display value (brightness, dimming, backlight) */
 	mipi_dbi_command(mipi, MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x28);
-	/* write display brightness value */
+	/* Write display brightness value */
 	mipi_dbi_command(mipi, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x7F);
-	/* exit sleep */
+	/* Exit sleep */
 	mipi_dbi_command(mipi, MIPI_DCS_EXIT_SLEEP_MODE);
-	mdelay(120);
-	/* display on */
+	msleep(120);
+	/* Display on */
 	mipi_dbi_command(mipi, MIPI_DCS_SET_DISPLAY_ON);
-	mdelay(50);
+	msleep(50);
 
+out_enable_flush:
 	mipi_dbi_enable_flush(mipi, crtc_state, plane_state);
 }
 
@@ -268,7 +278,7 @@ static int ili9488_probe(struct platform_device *pdev)
 		DRM_DEV_ERROR(dev, "Failed to ioremap 'mipi-dbi-type-b'\n");
 		return PTR_ERR(type_b->base);
 	}
-	type_b->skip_reset = of_property_read_bool(dev->of_node, "linux,skip-reset");
+	type_b->skip_initial_reset = of_property_read_bool(dev->of_node, "linux,skip-reset");
 
 	ret = mipi_dbi_type_b_init(type_b, mipi);
 	if (ret) {
