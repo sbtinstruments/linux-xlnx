@@ -31,11 +31,10 @@
 #define SINDRI_REG_HW_VERSION 0x00
 #define SINDRI_REG_FW_VERSION 0x01
 #define SINDRI_REG_INTERRUPT_CTRL 0x02
-#define SINDRI_REG_COND_CAL_TARGET 0x03
-#define SINDRI_REG_COND_CAL_STATE 0x05
-#define SINDRI_REG_CYCLE_TIME 0x06
-#define SINDRI_REG_TEMP 0x07
-#define SINDRI_REG_COND 0x08
+#define SINDRI_REG_COND_CAL_VALID 0x03
+#define SINDRI_REG_COND_CAL_OFFSET 0x04
+#define SINDRI_REG_COND_CAL_GAIN 0x06
+#define SINDRI_REG_COND 0x0a
 
 
 struct sindri_data {
@@ -47,6 +46,9 @@ struct sindri_data {
 	unsigned int interrupt_enabled;
 	unsigned int hw_version;
 	unsigned int fw_version;
+	unsigned int calibration_valid;
+	int calibration_offset;
+	int calibration_gain;
 
 	// A single datapoint
 	// Elements need to be aligned to their own length.
@@ -72,8 +74,10 @@ static int sindri_buffer_num_channels(const struct iio_chan_spec *spec)
 static int sindri_reg_size(const uint8_t reg)
 {
 	switch (reg) {
-	case SINDRI_REG_COND_CAL_TARGET:
 	case SINDRI_REG_COND:
+		return sizeof(__be16);
+	case SINDRI_REG_COND_CAL_OFFSET:
+	case SINDRI_REG_COND_CAL_GAIN:
 		return sizeof(__be16);
 	default:
 		return sizeof(uint8_t);
@@ -95,13 +99,6 @@ static const struct iio_chan_spec sindri_channels[] = {
 		},
 	},
 	IIO_CHAN_SOFT_TIMESTAMP(1),
-	{
-		.type = IIO_TEMP,
-		.address = SINDRI_REG_TEMP,
-		.info_mask_separate =
-			BIT(IIO_CHAN_INFO_RAW),
-		.scan_index = 2
-	},
 };
 
 
@@ -211,14 +208,6 @@ static int sindri_read_raw(struct iio_dev *indio_dev,
 		__be16 long_reg;
 
 		switch (chan->type) {
-		case IIO_TEMP:
-			ret = regmap_bulk_read(data->regmap, chan->address,
-					       &short_reg, sindri_reg_size(chan->address));
-			if (!ret) {
-				*val = (uint8_t)short_reg;
-				ret = IIO_VAL_INT;
-			}
-			return ret;
 		case IIO_ELECTRICALCONDUCTIVITY:
 			ret = regmap_bulk_read(data->regmap, chan->address,
 					       &long_reg, sindri_reg_size(chan->address));
@@ -237,43 +226,6 @@ static int sindri_read_raw(struct iio_dev *indio_dev,
 
 // Other sysfs attributes
 // Modelled after proximity/as3935.c
-// CYCLE TIME
-static ssize_t sindri_cycle_time_show(struct device *dev,
-					struct device_attribute *attr,
-					char *buf)
-{
-	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
-	char val;
-	int ret;
-
-	ret = regmap_bulk_read(data->regmap, SINDRI_REG_CYCLE_TIME,
-					       &val, sindri_reg_size(SINDRI_REG_CYCLE_TIME));
-	if (ret)
-		return ret;
-	return sprintf(buf, "%d\n", val);
-}
-
-static ssize_t sindri_cycle_time_store(struct device *dev,
-					struct device_attribute *attr,
-					const char *buf, size_t len)
-{
-	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
-	unsigned long val;
-	int ret;
-
-	ret = kstrtoul((const char *) buf, 10, &val);
-	if (ret)
-		return -EINVAL;
-
-	ret = regmap_bulk_write(data->regmap, SINDRI_REG_CYCLE_TIME,
-					       &val, sindri_reg_size(SINDRI_REG_CYCLE_TIME));
-
-	return len;
-}
-
-static IIO_DEVICE_ATTR(cycle_time, S_IRUGO | S_IWUSR,
-	sindri_cycle_time_show, sindri_cycle_time_store, SINDRI_REG_CYCLE_TIME);
-
 // INTERRUPT CONTROL
 static ssize_t sindri_interrupt_control_show(struct device *dev,
 					struct device_attribute *attr,
@@ -360,15 +312,92 @@ static ssize_t sindri_fw_version_show(struct device *dev,
 static IIO_DEVICE_ATTR(fw_version, S_IRUGO,
 	sindri_fw_version_show, NULL, SINDRI_REG_FW_VERSION);
 
+// Same thing with calibration values
+// Valid-ness
+unsigned int sindri_calibration_valid_acquire(struct sindri_data *data)
+{
+	char val;
+	int ret;
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_VALID,
+					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_VALID));
+	if (ret)
+		return ret;
+	return val;
+}
 
+static ssize_t sindri_calibration_valid_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	return sprintf(buf, "%d\n", data->calibration_valid);
+}
 
+static IIO_DEVICE_ATTR(calibration_valid, S_IRUGO,
+	sindri_calibration_valid_show, NULL, SINDRI_REG_COND_CAL_VALID);
+
+// Offset
+// MAGIC! (TODO: Find something more portable. This apparently requires -O2)
+int chars_to_int(char* c) {
+	int i = *(signed char *)(&c[0]);
+	i *= 1 << 8;
+	i |= c[1];
+	return i;
+}
+
+int sindri_calibration_offset_acquire(struct sindri_data *data)
+{
+	char val[2];
+	int ret;
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_OFFSET,
+					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_OFFSET));
+	if (ret)
+		return ret;
+	return chars_to_int(val);
+}
+
+static ssize_t sindri_calibration_offset_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	return sprintf(buf, "%d\n", data->calibration_offset);
+}
+
+static IIO_DEVICE_ATTR(calibration_offset, S_IRUGO,
+	sindri_calibration_offset_show, NULL, SINDRI_REG_COND_CAL_OFFSET);
+
+// Gain
+int sindri_calibration_gain_acquire(struct sindri_data *data)
+{
+	char val[2];
+	int ret;
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_GAIN,
+					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_GAIN));
+	if (ret)
+		return ret;
+	return chars_to_int(val);
+}
+
+static ssize_t sindri_calibration_gain_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	return sprintf(buf, "%d\n", data->calibration_gain);
+}
+
+static IIO_DEVICE_ATTR(calibration_gain, S_IRUGO,
+	sindri_calibration_gain_show, NULL, SINDRI_REG_COND_CAL_GAIN);
 
 
 static struct attribute *sindri_attributes[] = {
-	&iio_dev_attr_cycle_time.dev_attr.attr,
 	&iio_dev_attr_interrupt_ctrl.dev_attr.attr,
 	&iio_dev_attr_hw_version.dev_attr.attr,
 	&iio_dev_attr_fw_version.dev_attr.attr,
+	&iio_dev_attr_calibration_valid.dev_attr.attr,
+	&iio_dev_attr_calibration_offset.dev_attr.attr,
+	&iio_dev_attr_calibration_gain.dev_attr.attr,
 	NULL,
 };
 
@@ -482,6 +511,9 @@ static int sindri_probe(struct i2c_client *client,
 	// Acquire constant values
 	data->hw_version = sindri_hw_version_acquire(data);
 	data->fw_version = sindri_fw_version_acquire(data);
+	data->calibration_valid = sindri_calibration_valid_acquire(data);
+	data->calibration_offset = sindri_calibration_offset_acquire(data);
+	data->calibration_gain = sindri_calibration_gain_acquire(data);
 
 	// Testing interface
 	//uint8_t reg;
@@ -530,5 +562,5 @@ static struct i2c_driver sindri_driver = {
 module_i2c_driver(sindri_driver);
 
 MODULE_AUTHOR("Jonatan Midtgaard <jmi@sbtinstruments.com>");
-MODULE_DESCRIPTION("Sindri electrical conductivity sensor");
+MODULE_DESCRIPTION("Sindri sensor board");
 MODULE_LICENSE("GPL");
