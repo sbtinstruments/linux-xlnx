@@ -45,6 +45,8 @@ struct sindri_data {
 	struct regmap *regmap;
 	struct irq_work work;
 	unsigned int interrupt_enabled;
+	unsigned int hw_version;
+	unsigned int fw_version;
 
 	// A single datapoint
 	// Elements need to be aligned to their own length.
@@ -174,6 +176,7 @@ static irqreturn_t sindri_trigger_handler(int irq, void *private)
 	return IRQ_HANDLED;
 }
 
+// Triggered in interrupt context
 static irqreturn_t sindri_interrupt_handler(int irq, void *private)
 {
 	struct iio_dev *indio_dev = private;
@@ -271,8 +274,101 @@ static ssize_t sindri_cycle_time_store(struct device *dev,
 static IIO_DEVICE_ATTR(cycle_time, S_IRUGO | S_IWUSR,
 	sindri_cycle_time_show, sindri_cycle_time_store, SINDRI_REG_CYCLE_TIME);
 
+// INTERRUPT CONTROL
+static ssize_t sindri_interrupt_control_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	char val;
+	int ret;
+
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_INTERRUPT_CTRL,
+					       &val, sindri_reg_size(SINDRI_REG_INTERRUPT_CTRL));
+	if (ret)
+		return ret;
+	return sprintf(buf, "%d\n", val);
+}
+
+static ssize_t sindri_interrupt_control_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t len)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	unsigned long val;
+	int ret;
+
+	ret = kstrtoul((const char *) buf, 10, &val);
+	if (ret)
+		return -EINVAL;
+
+	ret = regmap_bulk_write(data->regmap, SINDRI_REG_INTERRUPT_CTRL,
+					       &val, sindri_reg_size(SINDRI_REG_INTERRUPT_CTRL));
+
+	return len;
+}
+
+static IIO_DEVICE_ATTR(interrupt_ctrl, S_IRUGO | S_IWUSR,
+	sindri_interrupt_control_show, sindri_interrupt_control_store, SINDRI_REG_INTERRUPT_CTRL);
+
+// HW and FW versions are static values, acquired during probe.
+// HW VERSION
+unsigned int sindri_hw_version_acquire(struct sindri_data *data)
+{
+	char val;
+	int ret;
+
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_HW_VERSION,
+					       &val, sindri_reg_size(SINDRI_REG_HW_VERSION));
+	if (ret)
+		return ret;
+	return val;
+}
+
+static ssize_t sindri_hw_version_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	return sprintf(buf, "%d\n", data->hw_version);
+}
+
+static IIO_DEVICE_ATTR(hw_version, S_IRUGO,
+	sindri_hw_version_show, NULL, SINDRI_REG_HW_VERSION);
+
+// FW VERSION
+unsigned int sindri_fw_version_acquire(struct sindri_data *data)
+{
+	char val;
+	int ret;
+
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_FW_VERSION,
+					       &val, sindri_reg_size(SINDRI_REG_FW_VERSION));
+	if (ret)
+		return ret;
+	return val;
+}
+
+static ssize_t sindri_fw_version_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	return sprintf(buf, "%d\n", data->fw_version);
+}
+
+static IIO_DEVICE_ATTR(fw_version, S_IRUGO,
+	sindri_fw_version_show, NULL, SINDRI_REG_FW_VERSION);
+
+
+
+
+
 static struct attribute *sindri_attributes[] = {
 	&iio_dev_attr_cycle_time.dev_attr.attr,
+	&iio_dev_attr_interrupt_ctrl.dev_attr.attr,
+	&iio_dev_attr_hw_version.dev_attr.attr,
+	&iio_dev_attr_fw_version.dev_attr.attr,
 	NULL,
 };
 
@@ -382,6 +478,10 @@ static int sindri_probe(struct i2c_client *client,
 		dev_err(&client->dev, "unable to register device\n");
 		goto unregister_buffer;
 	}
+
+	// Acquire constant values
+	data->hw_version = sindri_hw_version_acquire(data);
+	data->fw_version = sindri_fw_version_acquire(data);
 
 	// Testing interface
 	//uint8_t reg;
