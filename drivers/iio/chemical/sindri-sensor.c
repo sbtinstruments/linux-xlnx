@@ -314,23 +314,19 @@ static IIO_DEVICE_ATTR(fw_version, S_IRUGO,
 
 // Same thing with calibration values
 // Valid-ness
-unsigned int sindri_calibration_valid_acquire(struct sindri_data *data)
-{
-	char val;
-	int ret;
-	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_VALID,
-					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_VALID));
-	if (ret)
-		return ret;
-	return val;
-}
 
 static ssize_t sindri_calibration_valid_show(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
 {
 	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
-	return sprintf(buf, "%d\n", data->calibration_valid);
+	char val;
+	int ret;
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_VALID,
+					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_VALID));
+	if (ret)
+		return ret;
+	return sprintf(buf, "%d\n", val);
 }
 
 static IIO_DEVICE_ATTR(calibration_valid, S_IRUGO,
@@ -345,50 +341,82 @@ int chars_to_int(char* c) {
 	return i;
 }
 
-int sindri_calibration_offset_acquire(struct sindri_data *data)
-{
-	char val[2];
-	int ret;
-	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_OFFSET,
-					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_OFFSET));
-	if (ret)
-		return ret;
-	return chars_to_int(val);
-}
-
 static ssize_t sindri_calibration_offset_show(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
 {
 	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
-	return sprintf(buf, "%d\n", data->calibration_offset);
-}
-
-static IIO_DEVICE_ATTR(calibration_offset, S_IRUGO,
-	sindri_calibration_offset_show, NULL, SINDRI_REG_COND_CAL_OFFSET);
-
-// Gain
-int sindri_calibration_gain_acquire(struct sindri_data *data)
-{
-	char val[2];
+	__be16 val;
 	int ret;
-	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_GAIN,
-					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_GAIN));
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_OFFSET,
+					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_OFFSET));
 	if (ret)
 		return ret;
-	return chars_to_int(val);
+	return sprintf(buf, "%d\n", be16_to_cpu(val));
 }
 
+static ssize_t sindri_calibration_offset_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t len)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	unsigned long val;
+	int ret;
+
+	ret = kstrtoul((const char *) buf, 10, &val);
+	if (ret)
+		return -EINVAL;
+
+	// Convert to network format
+	__be16 nval = cpu_to_be16(val);
+	ret = regmap_bulk_write(data->regmap, SINDRI_REG_COND_CAL_OFFSET,
+					       &nval, sindri_reg_size(SINDRI_REG_COND_CAL_OFFSET));
+	
+
+	return len;
+}
+
+static IIO_DEVICE_ATTR(calibration_offset, S_IRUGO | S_IWUSR,
+	sindri_calibration_offset_show, sindri_calibration_offset_store, SINDRI_REG_COND_CAL_OFFSET);
+
+// Gain
 static ssize_t sindri_calibration_gain_show(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
 {
 	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
-	return sprintf(buf, "%d\n", data->calibration_gain);
+	__be16 val;
+	int ret;
+	ret = regmap_bulk_read(data->regmap, SINDRI_REG_COND_CAL_GAIN,
+					       &val, sindri_reg_size(SINDRI_REG_COND_CAL_GAIN));
+	if (ret)
+		return ret;
+	return sprintf(buf, "%d\n", be16_to_cpu(val));
 }
 
-static IIO_DEVICE_ATTR(calibration_gain, S_IRUGO,
-	sindri_calibration_gain_show, NULL, SINDRI_REG_COND_CAL_GAIN);
+static ssize_t sindri_calibration_gain_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t len)
+{
+	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
+	unsigned long val;
+	int ret;
+
+	ret = kstrtoul((const char *) buf, 10, &val);
+	if (ret)
+		return -EINVAL;
+
+	// Convert to network format
+	__be16 nval = cpu_to_be16(val);
+	ret = regmap_bulk_write(data->regmap, SINDRI_REG_COND_CAL_GAIN,
+					       &nval, sindri_reg_size(SINDRI_REG_COND_CAL_GAIN));
+	
+
+	return len;
+}
+
+static IIO_DEVICE_ATTR(calibration_gain, S_IRUGO | S_IWUSR,
+	sindri_calibration_gain_show, sindri_calibration_gain_store, SINDRI_REG_COND_CAL_GAIN);
 
 
 static struct attribute *sindri_attributes[] = {
@@ -511,9 +539,9 @@ static int sindri_probe(struct i2c_client *client,
 	// Acquire constant values
 	data->hw_version = sindri_hw_version_acquire(data);
 	data->fw_version = sindri_fw_version_acquire(data);
-	data->calibration_valid = sindri_calibration_valid_acquire(data);
-	data->calibration_offset = sindri_calibration_offset_acquire(data);
-	data->calibration_gain = sindri_calibration_gain_acquire(data);
+	//data->calibration_valid = sindri_calibration_valid_acquire(data);
+	//data->calibration_offset = sindri_calibration_offset_acquire(data);
+	//data->calibration_gain = sindri_calibration_gain_acquire(data);
 
 	// Testing interface
 	//uint8_t reg;
