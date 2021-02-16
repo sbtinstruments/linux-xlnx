@@ -8,11 +8,12 @@
 #include <linux/circ_buf.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/fs.h>
 #include <linux/kthread.h>
-#include <linux/sched/types.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/pm_runtime.h>
+#include <uapi/linux/sched/types.h>
 
 #include "lockin_amplifier.h"
 #include "hw.h"
