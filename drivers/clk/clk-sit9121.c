@@ -89,7 +89,7 @@ static int sit9121_probe(struct platform_device *pdev)
 	/* clock */
 	init.name = clk_name;
 	init.ops = &sit9121_ops;
-	init.flags = CLK_IS_BASIC;
+	init.flags = 0;
 	init.parent_names = NULL;
 	init.num_parents = 0;
 	sit9121->fixed_rate = rate;
