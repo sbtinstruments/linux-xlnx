@@ -12,13 +12,15 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/sched/clock.h>
-#include <video/mipi_display.h>
 
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_drv.h>
+#include <drm/drm_fb_helper.h>
+#include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
-#include <drm/tinydrm/mipi-dbi.h>
-#include <drm/tinydrm/tinydrm.h>
-#include <drm/tinydrm/tinydrm-helpers.h>
+#include <drm/drm_mipi_dbi.h>
+#include <drm/drm_modeset_helper.h>
+#include <video/mipi_display.h>
 
 #define MIPI_DBI_B_REG_VERSION      0x0
 #define MIPI_DBI_B_REG_CONTROL      0x4
@@ -40,12 +42,12 @@ struct type_b {
 	bool skip_initial_reset;
 };
 
-struct type_b *type_b_from_mipi_dbi(struct mipi_dbi *mipi)
+struct type_b *type_b_from_mipi_dbi(struct mipi_dbi *dbi)
 {
-	return (struct type_b *)mipi->spi;
+	return (struct type_b *)dbi->spi;
 }
 
-/* Copied from mipi-dbi.c */
+/* Copied from drm_mipi_dbi.c */
 #define MIPI_DBI_DEBUG_COMMAND(cmd, data, len) \
 ({ \
 	if (!len) \
@@ -56,7 +58,7 @@ struct type_b *type_b_from_mipi_dbi(struct mipi_dbi *mipi)
 		DRM_DEBUG_DRIVER("cmd=%02x, len=%zu\n", cmd, len); \
 })
 
-/* Copied from mipi-dbi.c since it is not exported from there. */
+/* Copied from drm_mipi_dbi.c since it is not exported from there. */
 static const u8 mipi_dbi_dcs_read_commands[] = {
 	MIPI_DCS_GET_DISPLAY_ID,
 	MIPI_DCS_GET_RED_CHANNEL,
@@ -81,16 +83,16 @@ static const u8 mipi_dbi_dcs_read_commands[] = {
 	0, /* sentinel */
 };
 
-static int mipi_dbi_type_b_command(struct mipi_dbi *mipi, u8 cmd, u8 *param, size_t num)
+static int mipi_dbi_type_b_command(struct mipi_dbi *dbi, u8 *cmd, u8 *param, size_t num)
 {
-	struct type_b *type_b = type_b_from_mipi_dbi(mipi);
-	MIPI_DBI_DEBUG_COMMAND(cmd, param, num);
+	struct type_b *type_b = type_b_from_mipi_dbi(dbi);
+	MIPI_DBI_DEBUG_COMMAND(*cmd, param, num);
 	/* Assert CS */
 	iowrite32(MIPI_DBI_B_CONTROL_CS, type_b->base + MIPI_DBI_B_REG_CONTROL);
 	/* Write command */
-	iowrite8(cmd, type_b->base + MIPI_DBI_B_REG_COMMAND);
+	iowrite8(*cmd, type_b->base + MIPI_DBI_B_REG_COMMAND);
 	/* Some special commands may send the parameters in an optimized way */
-	switch (cmd) {
+	switch (*cmd) {
 	/* 8 bits at a time is the default */
 	default:
 		while (0 < num) {
@@ -113,23 +115,23 @@ static int mipi_dbi_type_b_command(struct mipi_dbi *mipi, u8 cmd, u8 *param, siz
 	return 0;
 }
 
-int mipi_dbi_type_b_init(struct type_b *type_b, struct mipi_dbi *mipi)
+int mipi_dbi_type_b_init(struct type_b *type_b, struct mipi_dbi *dbi)
 {
 	/* HACK: Use the spi field to store the type_b struct. */
-	mipi->spi = (void *)type_b;
+	dbi->spi = (void *)type_b;
 
-	mipi->read_commands = mipi_dbi_dcs_read_commands;
-	mipi->command = mipi_dbi_type_b_command;
-	mipi->swap_bytes = false;
+	dbi->read_commands = mipi_dbi_dcs_read_commands;
+	dbi->command = mipi_dbi_type_b_command;
+	dbi->swap_bytes = false;
 
 	DRM_DEBUG_DRIVER("Using MIPI DBI Type B (Intel 8080 type parallel bus)\n");
 
 	return 0;
 }
 
-static void mipi_dbi_type_b_hw_reset(struct mipi_dbi *mipi)
+static void mipi_dbi_type_b_hw_reset(struct mipi_dbi *dbi)
 {
-	struct type_b *type_b = type_b_from_mipi_dbi(mipi);
+	struct type_b *type_b = type_b_from_mipi_dbi(dbi);
 	iowrite32(MIPI_DBI_B_CONTROL_RESET, type_b->base + MIPI_DBI_B_REG_CONTROL);
 	msleep(10);
 	iowrite32(0, type_b->base + MIPI_DBI_B_REG_CONTROL);
@@ -140,9 +142,9 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 				struct drm_crtc_state *crtc_state,
 				struct drm_plane_state *plane_state)
 {
-	struct tinydrm_device *tdev = pipe_to_tinydrm(pipe);
-	struct mipi_dbi *mipi = mipi_dbi_from_tinydrm(tdev);
-	struct type_b *type_b = type_b_from_mipi_dbi(mipi);
+	struct mipi_dbi_dev *dbidev = drm_to_mipi_dbi_dev(pipe->crtc.dev);
+	struct mipi_dbi *dbi = &dbidev->dbi;
+	struct type_b *type_b = type_b_from_mipi_dbi(dbi);
 	u32 version;
 
 	version = ioread32(type_b->base + MIPI_DBI_B_REG_VERSION);
@@ -157,80 +159,75 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 		goto out_enable_flush;
 	}
 
-	if (mipi_dbi_display_is_on(mipi)) {
+	if (mipi_dbi_display_is_on(dbi)) {
 		goto out_enable_flush;
 	}
 
 	/* Hardware reset */
-	mipi_dbi_type_b_hw_reset(mipi);
-	mipi_dbi_command(mipi, MIPI_DCS_SOFT_RESET);
+	mipi_dbi_type_b_hw_reset(dbi);
+	mipi_dbi_command(dbi, MIPI_DCS_SOFT_RESET);
 	msleep(120);
 
 	/*** Apply settings ***/
 	/* Display off */
-	mipi_dbi_command(mipi, MIPI_DCS_SET_DISPLAY_OFF);
+	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_OFF);
 	/* Positive gamma control */
-	mipi_dbi_command(mipi, 0xE0, 0x00, 0x03, 0x09, 0x08, 0x16, \
+	mipi_dbi_command(dbi, 0xE0, 0x00, 0x03, 0x09, 0x08, 0x16, \
 			0x0A, 0x3F, 0x78, 0x4C, 0x09, 0x0A, \
 			0x08, 0x16, 0x1A, 0x0F);
 	/* Negative gamma control */
-	mipi_dbi_command(mipi, 0xE1, 0x00, 0x16, 0x19, 0x03, 0x0F, \
+	mipi_dbi_command(dbi, 0xE1, 0x00, 0x16, 0x19, 0x03, 0x0F, \
 			0x05, 0x32, 0x45, 0x46, 0x04, 0x0E, \
 			0x0D, 0x35, 0x37, 0x0F);
 	/* Power control 1 */
-	mipi_dbi_command(mipi, 0xC0, 0x17, 0x15);
+	mipi_dbi_command(dbi, 0xC0, 0x17, 0x15);
 	/* Power control 2 */
-	mipi_dbi_command(mipi, 0xC1, 0x41);
+	mipi_dbi_command(dbi, 0xC1, 0x41);
 	/* VCOM control 1 */
-	mipi_dbi_command(mipi, 0xC5, 0x00, 0x12, 0x80);
+	mipi_dbi_command(dbi, 0xC5, 0x00, 0x12, 0x80);
 	/* Memory access control: MX and BGR */
-	mipi_dbi_command(mipi, MIPI_DCS_SET_ADDRESS_MODE, 0x48);
+	mipi_dbi_command(dbi, MIPI_DCS_SET_ADDRESS_MODE, 0x48);
 	/* Pixel interchange format: RGB565 over MIPI 16 bit */
-	mipi_dbi_command(mipi, MIPI_DCS_SET_PIXEL_FORMAT,
+	mipi_dbi_command(dbi, MIPI_DCS_SET_PIXEL_FORMAT,
 	                 ILI9488_DBI_16_BPP | (ILI9488_DPI_16_BPP << 4));
 	/* Interface mode control */
-	mipi_dbi_command(mipi, 0xB0, 0x00);
+	mipi_dbi_command(dbi, 0xB0, 0x00);
 	/* Frame rate control (0x01 is 30.38 Hz; 0xA0 is 60.76 Hz) */
-	mipi_dbi_command(mipi, ILI9488_CMD_FRAME_RATE_CONTROL, 0xA0);
+	mipi_dbi_command(dbi, ILI9488_CMD_FRAME_RATE_CONTROL, 0xA0);
 	/* Display inversion ON */
-	mipi_dbi_command(mipi, 0x21);
+	mipi_dbi_command(dbi, 0x21);
 	/* Display inversion control */
-	mipi_dbi_command(mipi, ILI9488_CMD_DISPLAY_INVERSION_CONTROL,
+	mipi_dbi_command(dbi, ILI9488_CMD_DISPLAY_INVERSION_CONTROL,
                      ILI9488_DINV_2_DOT_INVERSION);
 	/* Write CTRL display value (brightness, dimming, backlight) */
-	mipi_dbi_command(mipi, MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x28);
+	mipi_dbi_command(dbi, MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x28);
 	/* Write display brightness value */
-	mipi_dbi_command(mipi, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x7F);
+	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x7F);
 	/* Exit sleep */
-	mipi_dbi_command(mipi, MIPI_DCS_EXIT_SLEEP_MODE);
+	mipi_dbi_command(dbi, MIPI_DCS_EXIT_SLEEP_MODE);
 	msleep(120);
 	/* Display on */
-	mipi_dbi_command(mipi, MIPI_DCS_SET_DISPLAY_ON);
+	mipi_dbi_command(dbi, MIPI_DCS_SET_DISPLAY_ON);
 	msleep(50);
 
 out_enable_flush:
-	mipi_dbi_enable_flush(mipi, crtc_state, plane_state);
+	mipi_dbi_enable_flush(dbidev, crtc_state, plane_state);
 }
 
 static const struct drm_simple_display_pipe_funcs ili9488_pipe_funcs = {
 	.enable = ili9488_pipe_enable,
 	.disable = mipi_dbi_pipe_disable,
-	.update = tinydrm_display_pipe_update,
+	.update = mipi_dbi_pipe_update,
 	.prepare_fb = drm_gem_fb_simple_display_pipe_prepare_fb,
-};
-
-static const uint32_t ili9488_formats[] = {
-	DRM_FORMAT_RGB565,
-	DRM_FORMAT_XRGB8888,
 };
 
 DEFINE_DRM_GEM_CMA_FOPS(ili9488_fops);
 
 static struct drm_driver ili9488_driver = {
-	.driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_PRIME |
-				  DRIVER_ATOMIC,
+	.driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
 	.fops			= &ili9488_fops,
-	TINYDRM_GEM_DRIVER_OPS,
+	.release		= mipi_dbi_release,
+	DRM_GEM_CMA_VMAP_DRIVER_OPS,
 	.name			= "ili9488",
 	.desc			= "Ilitek ILI9488",
 	.date			= "20190716",
@@ -247,19 +244,30 @@ MODULE_DEVICE_TABLE(of, ili9488_of_match);
 static int ili9488_probe(struct platform_device *pdev)
 {
 	const struct drm_display_mode mode = {
-		TINYDRM_MODE(320, 480, 49, 73)
+		DRM_SIMPLE_MODE(320, 480, 49, 73)
 	};
 	struct device *dev = &pdev->dev;
+	struct mipi_dbi_dev *dbidev;
+	struct drm_device *drm;
+	struct mipi_dbi *dbi;
 	struct type_b *type_b;
-	struct mipi_dbi *mipi;
 	struct resource *resource;
 	int rotation = 0;
 	int ret;
 
-	mipi = devm_kzalloc(dev, sizeof(*mipi), GFP_KERNEL);
-	if (!mipi) {
+	dbidev = devm_kzalloc(dev, sizeof(*dbidev), GFP_KERNEL);
+	if (!dbidev) {
 		return -ENOMEM;
 	}
+
+	dbi = &dbidev->dbi;
+	drm = &dbidev->drm;
+	ret = devm_drm_dev_init(dev, drm, &ili9488_driver);
+	if (ret) {
+		return ret;
+	}
+
+	drm_mode_config_init(drm);
 
 	type_b = devm_kzalloc(dev, sizeof(*type_b), GFP_KERNEL);
 	if (!type_b) {
@@ -280,40 +288,55 @@ static int ili9488_probe(struct platform_device *pdev)
 	}
 	type_b->skip_initial_reset = of_property_read_bool(dev->of_node, "linux,skip-reset");
 
-	ret = mipi_dbi_type_b_init(type_b, mipi);
-	if (ret) {
-		return ret;
-	}
-
-	ret = mipi_dbi_init(&pdev->dev, mipi, &ili9488_pipe_funcs,
-	                    &ili9488_driver, &mode, rotation);
+	ret = mipi_dbi_type_b_init(type_b, dbi);
 	if (ret) {
 		return ret;
 	}
 
 	/* Backlight */
-	mipi->backlight = devm_of_find_backlight(dev);
-	if (IS_ERR(mipi->backlight)) {
+	dbidev->backlight = devm_of_find_backlight(dev);
+	if (IS_ERR(dbidev->backlight)) {
 		DRM_DEV_ERROR(dev, "Failed to find backlight\n");
-		return PTR_ERR(mipi->backlight);
+		return PTR_ERR(dbidev->backlight);
 	}
 
-	platform_set_drvdata(pdev, &mipi->tinydrm);
+	ret = mipi_dbi_dev_init(dbidev, &ili9488_pipe_funcs, &mode, rotation);
+	if (ret) {
+		return ret;
+	}
 
-	return devm_tinydrm_register(&mipi->tinydrm);
+	drm_mode_config_reset(drm);
+
+	ret = drm_dev_register(drm, 0);
+	if (ret) {
+		return ret;
+	}
+
+	platform_set_drvdata(pdev, drm);
+
+	drm_fbdev_generic_setup(drm, 0);
+
+	return 0;
+}
+
+static int ili9488_remove(struct platform_device *pdev)
+{
+	struct drm_device *drm = platform_get_drvdata(pdev);
+
+	drm_dev_unplug(drm);
+	drm_atomic_helper_shutdown(drm);
+
+	return 0;
 }
 
 static int ili9488_pm_suspend(struct device *dev)
 {
-	struct tinydrm_device *tdev = dev_get_drvdata(dev);
-	return drm_mode_config_helper_suspend(tdev->drm);
+	return drm_mode_config_helper_suspend(dev_get_drvdata(dev));
 }
 
 static int ili9488_pm_resume(struct device *dev)
 {
-	struct tinydrm_device *tdev = dev_get_drvdata(dev);
-	drm_mode_config_helper_resume(tdev->drm);
-	return 0;
+	return drm_mode_config_helper_resume(dev_get_drvdata(dev));
 }
 
 static const struct dev_pm_ops ili9488_pm_ops = {
@@ -322,8 +345,7 @@ static const struct dev_pm_ops ili9488_pm_ops = {
 
 static void ili9488_shutdown(struct platform_device *pdev)
 {
-	struct tinydrm_device *tdev = platform_get_drvdata(pdev);
-	tinydrm_shutdown(tdev);
+	drm_atomic_helper_shutdown(platform_get_drvdata(pdev));
 }
 
 static struct platform_driver ili9488_platform_driver = {
@@ -334,6 +356,7 @@ static struct platform_driver ili9488_platform_driver = {
 		.pm = &ili9488_pm_ops,
 	},
 	.probe = ili9488_probe,
+	.remove = ili9488_remove,
 	.shutdown = ili9488_shutdown,
 };
 module_platform_driver(ili9488_platform_driver);
