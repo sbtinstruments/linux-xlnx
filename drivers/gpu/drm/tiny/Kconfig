@@ -85,6 +85,18 @@ config TINYDRM_REPAPER
 
 	  If M is selected the module will be called repaper.
 
+config TINYDRM_SSD2119
+	tristate "DRM support for Solomon Systech SSD2119 display panels"
+	depends on DRM && SPI
+	select DRM_KMS_HELPER
+	select DRM_KMS_CMA_HELPER
+	select DRM_MIPI_DBI
+	help
+	  DRM driver for the following Solomon Systech SSD2119 panels:
+	  * UMSH-8252MD-T 3.5" from 320x240 TFT (from U.R.T.)
+
+	  If M is selected the module will be called ssd2119.
+
 config TINYDRM_ST7586
 	tristate "DRM support for Sitronix ST7586 display panels"
 	depends on DRM && SPI
