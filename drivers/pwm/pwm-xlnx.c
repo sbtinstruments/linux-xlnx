@@ -85,6 +85,17 @@ static void xlnx_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 	iowrite32(0, pc->mmio_base + TCSR1);
 }
 
+static void xlnx_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
+                               struct pwm_state *state)
+{
+	struct xlnx_pwm_chip *pc = container_of(chip, struct xlnx_pwm_chip, chip);
+	unsigned int tcsr0 = ioread32(pc->mmio_base + TCSR0);
+	unsigned int tcsr1 = ioread32(pc->mmio_base + TCSR1);
+	bool timer0_enabled = (PWM_CONF & tcsr0) == PWM_CONF;
+	bool timer1_enabled = (PWM_CONF & tcsr1) == PWM_CONF;
+	state->enabled = timer0_enabled && timer1_enabled;
+}
+
 static int xlnx_pwm_set_polarity(struct pwm_chip *chip, struct pwm_device *pwm,
                                  enum pwm_polarity polarity)
 {
@@ -95,6 +106,7 @@ static const struct pwm_ops xlnx_pwm_ops = {
 	.config = xlnx_pwm_config,
 	.enable = xlnx_pwm_enable,
 	.disable = xlnx_pwm_disable,
+	.get_state = xlnx_pwm_get_state,
 	.set_polarity = xlnx_pwm_set_polarity,
 	.owner = THIS_MODULE,
 };
