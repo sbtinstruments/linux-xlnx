@@ -1,3 +1,11 @@
+SBT
+===
+
+Building this kernel locally requires a suitable (cross-)compiler, and also the packages (available on Ubuntu):
+`flex bison u-boot-tools`
+
+Use the `Makefile-sbt` to build.
+
 Linux kernel
 ============
 
