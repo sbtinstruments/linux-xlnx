@@ -350,6 +350,9 @@ CONFIG_SENSORS_ADS1015=n
 # Atmel chip
 CONFIG_SINDRI_SENSOR=y
 
+# Flow sensor
+CONFIG_SLF3X=y
+
 # OverlayFS
 CONFIG_OVERLAY_FS=y
 CONFIG_OVERLAY_FS_REDIRECT_ALWAYS_FOLLOW=n  # Recommended off in fs/overlayfs/Kconfig

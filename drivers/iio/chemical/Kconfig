@@ -97,6 +97,19 @@ config SINDRI_SENSOR
 	 Say Y here to build I2C interface support for the following
 	 Sindri electrical conductivity sensor board by SBT Instruments.
 
+config SLF3X
+	tristate "Sensirion SLF3x liquid flow sensor"
+	depends on I2C
+	select CRC8
+	help
+	 Say Y here to build I2C interface support for the following
+	 Sensirion SLF3 gas sensors:
+	 * SLF3S-1300F liquid flow sensor
+	 * SLF3S-0600F liquid flow sensor
+
+	 To compile this driver as module, choose M here: the
+	 module will be called slf3x.
+
 config SPS30
 	tristate "SPS30 particulate matter sensor"
 	depends on I2C
