@@ -344,10 +344,8 @@ CONFIG_SPI_AT25SF041=y
 CONFIG_SPI_AT25SF041_TEST_CON=y
 
 # For conductivity sensor
-# IIO driver
-CONFIG_TI_ADS1015=y
-# HWMON driver
-CONFIG_SENSORS_ADS1015=n
+# IIO driver (this driver works for the entire MCP342x line)
+CONFIG_MCP3422=y
 # Atmel chip
 CONFIG_SINDRI_SENSOR=y
 
