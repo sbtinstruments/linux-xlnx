@@ -37,6 +37,11 @@
 #define ILI9488_DPI_16_BPP                      0x5
 #define ILI9488_DBI_16_BPP                      0x5
 
+#define ILI9488_MADCTL_BGR          BIT(3)
+#define ILI9488_MADCTL_MV           BIT(5)
+#define ILI9488_MADCTL_MX           BIT(6)
+#define ILI9488_MADCTL_MY           BIT(7)
+
 struct type_b {
 	void __iomem *base;
 	bool skip_initial_reset;
@@ -146,6 +151,7 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 	struct mipi_dbi *dbi = &dbidev->dbi;
 	struct type_b *type_b = type_b_from_mipi_dbi(dbi);
 	u32 version;
+	u8 addr_mode;
 
 	version = ioread32(type_b->base + MIPI_DBI_B_REG_VERSION);
 	DRM_DEBUG_DRIVER("MIPI DBI Type B HW version: %d\n", version);
@@ -185,8 +191,6 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 	mipi_dbi_command(dbi, 0xC1, 0x41);
 	/* VCOM control 1 */
 	mipi_dbi_command(dbi, 0xC5, 0x00, 0x12, 0x80);
-	/* Memory access control: MX and BGR */
-	mipi_dbi_command(dbi, MIPI_DCS_SET_ADDRESS_MODE, 0x48);
 	/* Pixel interchange format: RGB565 over MIPI 16 bit */
 	mipi_dbi_command(dbi, MIPI_DCS_SET_PIXEL_FORMAT,
 	                 ILI9488_DBI_16_BPP | (ILI9488_DPI_16_BPP << 4));
@@ -211,6 +215,24 @@ static void ili9488_pipe_enable(struct drm_simple_display_pipe *pipe,
 	msleep(50);
 
 out_enable_flush:
+	/* Memory access control: MX and BGR */
+	switch (dbidev->rotation) {
+	default:
+		addr_mode = ILI9488_MADCTL_MX;
+		break;
+	case 90:
+		addr_mode = ILI9488_MADCTL_MV;
+		break;
+	case 180:
+		addr_mode = ILI9488_MADCTL_MY;
+		break;
+	case 270:
+		addr_mode = ILI9488_MADCTL_MV | ILI9488_MADCTL_MY |
+			    ILI9488_MADCTL_MX;
+		break;
+	}
+	addr_mode |= ILI9488_MADCTL_BGR;
+	mipi_dbi_command(dbi, MIPI_DCS_SET_ADDRESS_MODE, addr_mode);
 	mipi_dbi_enable_flush(dbidev, crtc_state, plane_state);
 }
 
@@ -299,6 +321,9 @@ static int ili9488_probe(struct platform_device *pdev)
 		DRM_DEV_ERROR(dev, "Failed to find backlight\n");
 		return PTR_ERR(dbidev->backlight);
 	}
+
+	/* Rotation */
+	device_property_read_u32(dev, "rotation", &rotation);
 
 	ret = mipi_dbi_dev_init(dbidev, &ili9488_pipe_funcs, &mode, rotation);
 	if (ret) {
