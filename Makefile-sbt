@@ -1,5 +1,5 @@
 # Cross-compilation
-CROSS_COMPILE?=arm-none-linux-gnueabihf-
+CROSS_COMPILE?=arm-linux-gnueabihf-
 processors=$(shell grep -c ^processor /proc/cpuinfo)
 cflags="-O2 -mtune=cortex-a9 -mfpu=neon -mfloat-abi=hard"
 makecmd=CROSS_COMPILE=$(CROSS_COMPILE) $(MAKE) -j $(processors) \
