@@ -365,13 +365,25 @@ static int slf3x_probe(struct i2c_client *client,
 		goto unregister_buffer;
 	}
 
+	// This is not a proper reset, but we prefer not to use the general call address.
+	// It is needed to support a soft reboot
+	data->state = IDLE;
+	ret = slf3x_stop_meas(data);
+	if (ret) {
+		dev_err(&client->dev,
+			"failed to reset sensor\n");
+		goto unregister_buffer;
+	}
+	// Sleep for at least 0.5 msecs as per sensor specification
+	usleep_range(500, 700);
+
 	// TODO: do this later, with an option to choose either calibration
 	data->state = BUSY;
 	ret = slf3x_start_meas(data, H2O);
 	if (ret) {
 		dev_err(&client->dev,
 			"failed to start continuous measurement\n");
-		return ret;
+		goto unregister_buffer;
 	}
 
 	return 0;
