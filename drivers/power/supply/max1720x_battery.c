@@ -12,6 +12,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/i2c.h>
+#include <linux/log2.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
@@ -61,6 +62,28 @@
 #define MAX1720X_STATUS_VOLT_MIN_ALRT (1 << 8)
 #define MAX1720X_STATUS_CURR_MAX_ALRT (1 << 6)
 #define MAX1720X_STATUS_CURR_MIN_ALRT (1 << 2)
+
+/* PACKCFG register bits */
+#define MAX1720X_PACKCFG_NCELLS_POS (0)
+#define MAX1720X_PACKCFG_NCELLS_MASK (0xF << MAX1720X_PACKCFG_NCELLS_POS)
+/* Note that position 4 is always zero */
+#define MAX1720X_PACKCFG_BALCFG_POS (5)
+#define MAX1720X_PACKCFG_BALCFG_MASK (0x7 << MAX1720X_PACKCFG_BALCFG_POS)
+#define MAX1720X_PACKCFG_CXEN_POS (8)
+#define MAX1720X_PACKCFG_CXEN_MASK (1 << MAX1720X_PACKCFG_CXEN_POS)
+#define MAX1720X_PACKCFG_BTEN_POS (9)
+#define MAX1720X_PACKCFG_BTEN_MASK (1 << MAX1720X_PACKCFG_BTEN_POS)
+#define MAX1720X_PACKCFG_CHEN_POS (10)
+#define MAX1720X_PACKCFG_CHEN_MASK (1 << MAX1720X_PACKCFG_CHEN_POS)
+#define MAX1720X_PACKCFG_TDEN_POS (11)
+#define MAX1720X_PACKCFG_TDEN_MASK (1 << MAX1720X_PACKCFG_TDEN_POS)
+#define MAX1720X_PACKCFG_A1EN_POS (12)
+#define MAX1720X_PACKCFG_A1EN_MASK (1 << MAX1720X_PACKCFG_A1EN_POS)
+#define MAX1720X_PACKCFG_A2EN_POS (13)
+#define MAX1720X_PACKCFG_A2EN_MASK (1 << MAX1720X_PACKCFG_A2EN_POS)
+/* Note that position 14 is always zero */
+#define MAX1720X_PACKCFG_FGT_POS (15)
+#define MAX1720X_PACKCFG_FGT_MASK (1 << MAX1720X_PACKCFG_FGT_POS)
 
 /* ProtStatus register bits for MAX1730X */
 #define MAX1730X_PROTSTATUS_CHGWDT (1 << 15)
@@ -417,6 +440,9 @@ struct max1720x_platform_data {
 	 * the datasheet although it can be changed by board designers.
 	 */
 	unsigned int rsense; /* in mOhm */
+	int ncells; /* number of cells */
+	int cell_balancing_vthres; /* in uV */
+	int charge_full_design; /* in uAh */
 	int volt_min; /* in mV */
 	int volt_max; /* in mV */
 	int temp_min; /* in DegreC */
@@ -480,6 +506,7 @@ enum register_ids {
 	VEMPTY_REG,
 	QH_REG,
 	IALRTTH_REG,
+	PACKCFG_REG,
 	PROTSTATUS_REG,
 	PROTALRTS_REG,
 	ATTTE_REG,
@@ -594,6 +621,7 @@ static const u16 max1720x_regs[] = {
 	[QH_REG] = 0x4D,
 	[COMMSTAT_REG] = 0x61,
 	[IALRTTH_REG] = 0xB4,
+	[PACKCFG_REG] = 0xBD,
 	[ATTTE_REG] = 0xDD,
 	[BATT_REG] = 0xDA,
 	[VFOCV_REG] = 0xFB,
@@ -5467,6 +5495,47 @@ static void max1720x_set_alert_thresholds(struct max1720x_priv *priv)
 	max1720x_regmap_write(priv, priv->regs[IALRTTH_REG], val);
 }
 
+static inline int vthres_to_balcfg(u32 vthres)
+{
+	/* Microvolt (uV) to special config value.
+       Follows the equation from the datasheet:
+	       vthres = 1.25 mV * 2^(balcfg)
+	   Specifically, implements the inverse:
+	       balcfg = log2(vthres / 1.25 mV)
+	*/
+	if (vthres == 0) {
+		return 0;  /* Disable balancing */
+	}
+	return ilog2(vthres / 1250);
+}
+
+static void max1720x_set_config(struct max1720x_priv *priv)
+{
+	struct max1720x_platform_data *pdata = priv->pdata;
+	u32 val;
+	u32 balcfg;
+
+	/* Set PackCfg */
+	val = 0;
+	if (pdata->ncells >= 0) {
+		val |= (pdata->ncells << MAX1720X_PACKCFG_NCELLS_POS) & MAX1720X_PACKCFG_NCELLS_MASK;
+	}
+	if (pdata->cell_balancing_vthres >= 0) {
+		balcfg = vthres_to_balcfg(pdata->cell_balancing_vthres);
+		val |= (balcfg << MAX1720X_PACKCFG_BALCFG_POS) & MAX1720X_PACKCFG_BALCFG_MASK;
+	}
+	/* Always set ChEN, TdEN, and A1EN. We can make this devicetree-configurable
+	   at a later point. */
+	val |= (1 << MAX1720X_PACKCFG_CHEN_POS);
+	val |= (1 << MAX1720X_PACKCFG_TDEN_POS);
+	val |= (1 << MAX1720X_PACKCFG_A1EN_POS);
+	max1720x_regmap_write(priv, priv->regs[PACKCFG_REG], val);
+
+	/* DesignCap */
+	val = pdata->charge_full_design * priv->pdata->rsense / 5000;
+	max1720x_regmap_write(priv, priv->regs[DESIGNCAP_REG], val);
+}
+
 static int max1720x_init(struct max1720x_priv *priv)
 {
 	int ret;
@@ -5524,6 +5593,9 @@ static int max1720x_init(struct max1720x_priv *priv)
 		return ret;
 
 	dev_info(priv->dev, "IC Version: 0x%04x\n", fgrev);
+
+	/* Optional step - config initialization */
+	max1720x_set_config(priv);
 
 	/* Optional step - alert threshold initialization */
 	max1720x_set_alert_thresholds(priv);
@@ -5627,6 +5699,23 @@ static struct max1720x_platform_data *max1720x_parse_dt(struct device *dev)
 	ret = of_property_read_u32(np, "rsense", &pdata->rsense);
 	if (ret < 0)
 		pdata->rsense = 10;
+
+	ret = of_property_read_u32(np, "ncells", &pdata->ncells);
+	if (ret < 0)
+		/* -1 means "do not change the register value" */
+		pdata->ncells = -1;
+
+	ret = of_property_read_u32(np, "cell-balancing-vthres",
+		&pdata->cell_balancing_vthres);
+	if (ret < 0)
+		/* -1 means "do not change the register value" */
+		pdata->cell_balancing_vthres = -1;
+
+	ret = of_property_read_u32(np, "charge-full-design",
+		&pdata->charge_full_design);
+	if (ret < 0)
+		/* -1 means "do not change the register value" */
+		pdata->charge_full_design = -1;
 
 	return pdata;
 }
