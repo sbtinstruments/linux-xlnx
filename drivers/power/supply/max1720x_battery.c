@@ -4820,7 +4820,7 @@ static int max1720x_get_temperature_alert_max(struct max1720x_priv *priv,
 
 static int max1720x_get_battery_health(struct max1720x_priv *priv, int *health)
 {
-	int temp, vavg, vbatt, ret;
+	int temp, temp_min, temp_max, vavg, vbatt, ret;
 	u32 val;
 
 	ret = max1720x_regmap_read(priv, priv->regs[AVGVCELL_REG], &val);
@@ -4855,12 +4855,20 @@ static int max1720x_get_battery_health(struct max1720x_priv *priv, int *health)
 	if (ret < 0)
 		goto health_error;
 
-	if (temp <= priv->pdata->temp_min) {
+	ret = max1720x_get_temperature_alert_min(priv, &temp_min);
+	if (ret < 0)
+		goto health_error;
+
+	ret = max1720x_get_temperature_alert_max(priv, &temp_max);
+	if (ret < 0)
+		goto health_error;
+
+	if (temp <= temp_min) {
 		*health = POWER_SUPPLY_HEALTH_COLD;
 		goto out;
 	}
 
-	if (temp >= priv->pdata->temp_max) {
+	if (temp >= temp_max) {
 		*health = POWER_SUPPLY_HEALTH_OVERHEAT;
 		goto out;
 	}
