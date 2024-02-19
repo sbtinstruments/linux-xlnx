@@ -1169,8 +1169,8 @@ static struct fbtft_platform_data *fbtft_properties_read(struct device *dev)
 	pdata->fps = fbtft_property_value(dev, "fps");
 	pdata->txbuflen = fbtft_property_value(dev, "txbuflen");
 	pdata->startbyte = fbtft_property_value(dev, "startbyte");
-	pdata->skip_reset = of_property_read_bool(node, "linux,skip-reset");
-	pdata->skip_clear = of_property_read_bool(node, "linux,skip-clear");
+	pdata->skip_reset = device_property_read_bool(dev, "linux,skip-reset");
+	pdata->skip_clear = device_property_read_bool(dev, "linux,skip-clear");
 	device_property_read_string(dev, "gamma", (const char **)&pdata->gamma);
 
 	if (device_property_present(dev, "led-gpios"))
