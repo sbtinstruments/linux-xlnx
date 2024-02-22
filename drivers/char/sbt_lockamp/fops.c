@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/pm_runtime.h>
+#include <linux/time.h>
 #include <uapi/linux/sched/types.h>
 
 #include "lockin_amplifier.h"
@@ -63,9 +64,7 @@ static void update_ma_time_ns(size_t size_n_since_last)
 	u64 ma_time_ns;
 	unsigned int ma_delta_ns;
 	unsigned int time_step_ns;
-	struct timespec ts;
-	getnstimeofday(&ts);
-	ma_time_ns = timespec_to_ns(&ts);
+	ma_time_ns = ktime_get_ns();
 	ma_delta_ns = ma_time_ns - last_ma_time_ns;
 	last_ma_time_ns = ma_time_ns;
 	if (0 < size_n_since_last) {
@@ -76,7 +75,6 @@ static void update_ma_time_ns(size_t size_n_since_last)
 
 static u64 sleep_until_fifo_half_full(struct lockamp *lockamp)
 {
-	struct timespec ts;
 	u64 before_sleep_ns;
 	u64 after_sleep_ns;
 	u64 ret;
@@ -84,8 +82,7 @@ static u64 sleep_until_fifo_half_full(struct lockamp *lockamp)
 	unsigned long sleep_upper_us;
 	unsigned long sleep_lower_us;
 	/* Profile begin */
-	getnstimeofday(&ts);
-	before_sleep_ns = timespec_to_ns(&ts);
+	before_sleep_ns = ktime_get_ns();
 	/* Target sleep duration. E.g., 178 ms */
 	ret = lockamp_get_read_delay_ns(lockamp, &target_sleep_ns);
 	if (ret < 0) {
@@ -98,8 +95,7 @@ static u64 sleep_until_fifo_half_full(struct lockamp *lockamp)
 	lockamp_debug3 = sleep_upper_us;
 	usleep_range(sleep_lower_us, sleep_upper_us);
 	/* Profile end */
-	getnstimeofday(&ts);
-	after_sleep_ns = timespec_to_ns(&ts);
+	after_sleep_ns = ktime_get_ns();
 	/* Return actual sleep duration */
 	return after_sleep_ns - before_sleep_ns;
 }
@@ -108,7 +104,6 @@ static int fifo_to_sbuf(void *data)
 {
 	struct lockamp *lockamp = data;
 	size_t size_n;
-	struct timespec ts;
 	u64 start, end;
 	/* Continuously poll the FIFO */
 	for (;;) {
@@ -116,16 +111,14 @@ static int fifo_to_sbuf(void *data)
 			break;
 		}
 		/* Profile begin */
-		getnstimeofday(&ts);
-		start = timespec_to_ns(&ts);
+		start = ktime_get_ns();
 		/* Actual work */
 		mutex_lock(&lockamp->signal_buf_m);
 		size_n = lockamp_fifo_move_to_sbuf(lockamp);
 		update_ma_time_ns(size_n);
 		mutex_unlock(&lockamp->signal_buf_m);
 		/* Profile end */
-		getnstimeofday(&ts);
-		end = timespec_to_ns(&ts);
+		end = ktime_get_ns();
 		lockamp_fifo_read_duration = end - start;
 		/* Wait for data */
 		lockamp_fifo_read_delay = sleep_until_fifo_half_full(lockamp);
@@ -141,9 +134,7 @@ static int fifo_to_sbuf(void *data)
 
 static void reset_start_time(struct lockamp *lockamp)
 {
-	struct timespec ts;
-	getnstimeofday(&ts);
-	lockamp->last_start_time_ns = timespec_to_ns(&ts);
+	lockamp->last_start_time_ns = ktime_get_ns();
 }
 
 
