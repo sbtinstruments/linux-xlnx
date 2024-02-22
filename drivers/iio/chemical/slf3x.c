@@ -131,58 +131,38 @@ static const struct slf3x_device slf3x_devices[] = {
 	},
 };
 
-/**
- * slf3x_verify_buffer() - verify the checksums of the data buffer words
- *
- * @data:       SLF3x data
- * @buf:        Raw data buffer
- * @word_count: Num data words stored in the buffer, excluding CRC bytes
- *
- * Return:      0 on success, negative error otherwise.
- */
-
 DECLARE_CRC8_TABLE(slf3x_crc8_table);
-static int slf3x_verify_buffer(const struct slf3x_data *data,
-			       union slf3x_reading *buf, size_t word_count)
-{
-	size_t size = word_count * (SLF3X_WORD_LEN + SLF3X_CRC8_LEN);
-	int i;
-	u8 crc;
-	u8 *data_buf = &buf->start;
 
-	for (i = 0; i < size; i += SLF3X_WORD_LEN + SLF3X_CRC8_LEN) {
-		crc = crc8(slf3x_crc8_table, &data_buf[i], SLF3X_WORD_LEN,
-			   SLF3X_CRC8_INIT);
-		if (crc != data_buf[i + SLF3X_WORD_LEN]) {
-			dev_err(&data->client->dev, "CRC error\n");
-			return -EIO;
-		}
-	}
+// /**
+//  * slf3x_verify_buffer() - verify the checksums of the data buffer words
+//  *
+//  * @data:       SLF3x data
+//  * @buf:        Raw data buffer
+//  * @word_count: Num data words stored in the buffer, excluding CRC bytes
+//  *
+//  * Return:      0 on success, negative error otherwise.
+//  */
+// static int slf3x_verify_buffer(const struct slf3x_data *data,
+// 			       union slf3x_reading *buf, size_t word_count)
+// {
+// 	size_t size = word_count * (SLF3X_WORD_LEN + SLF3X_CRC8_LEN);
+// 	int i;
+// 	u8 crc;
+// 	u8 *data_buf = &buf->start;
 
-	return 0;
-}
+// 	for (i = 0; i < size; i += SLF3X_WORD_LEN + SLF3X_CRC8_LEN) {
+// 		crc = crc8(slf3x_crc8_table, &data_buf[i], SLF3X_WORD_LEN,
+// 			   SLF3X_CRC8_INIT);
+// 		if (crc != data_buf[i + SLF3X_WORD_LEN]) {
+// 			dev_err(&data->client->dev, "CRC error\n");
+// 			return -EIO;
+// 		}
+// 	}
 
-static int slf3x_buffer_postenable(struct iio_dev *indio_dev)
-{
-	struct slf3x_data *data = iio_priv(indio_dev);
-	int ret;
-
-	ret = iio_triggered_buffer_postenable(indio_dev);
-	return ret;
-}
-
-static int slf3x_buffer_predisable(struct iio_dev *indio_dev)
-{
-	struct slf3x_data *data = iio_priv(indio_dev);
-	int ret;
-
-	ret = iio_triggered_buffer_predisable(indio_dev);
-	return ret;
-}
+// 	return 0;
+// }
 
 static const struct iio_buffer_setup_ops slf3x_buffer_setup_ops = {
-	.postenable = slf3x_buffer_postenable,
-	.predisable = slf3x_buffer_predisable,
 };
 
 static int slf3x_do_meas(struct slf3x_data *data) {
@@ -393,14 +373,12 @@ unregister_buffer:
 	return ret;
 }
 
-static int slf3x_remove(struct i2c_client *client)
+static void slf3x_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 
 	iio_device_unregister(indio_dev);
 	iio_triggered_buffer_cleanup(indio_dev);
-
-	return 0;
 }
 
 static const struct i2c_device_id slf3x_id[] = { { "slf3s-1300f", SLF3S_1300F },
