@@ -61,15 +61,15 @@ static const struct regmap_config sindri_regmap_config = {
 	.val_bits = 8,
 };
 
-static int sindri_buffer_num_channels(const struct iio_chan_spec *spec)
-{
-	int idx = 0;
+// static int sindri_buffer_num_channels(const struct iio_chan_spec *spec)
+// {
+// 	int idx = 0;
 
-	for (; spec->type != IIO_TIMESTAMP; spec++)
-		idx++;
+// 	for (; spec->type != IIO_TIMESTAMP; spec++)
+// 		idx++;
 
-	return idx;
-};
+// 	return idx;
+// };
 
 static int sindri_reg_size(const uint8_t reg)
 {
@@ -118,27 +118,7 @@ static struct sindri_device sindri_devices[] = {
 	},
 };
 
-static int sindri_buffer_postenable(struct iio_dev *indio_dev)
-{
-	struct sindri_data *data = iio_priv(indio_dev);
-	int ret;
-
-	ret = iio_triggered_buffer_postenable(indio_dev);
-	return ret;
-}
-
-static int sindri_buffer_predisable(struct iio_dev *indio_dev)
-{
-	struct sindri_data *data = iio_priv(indio_dev);
-	int ret;
-
-	ret = iio_triggered_buffer_predisable(indio_dev);
-	return ret;
-}
-
 static const struct iio_buffer_setup_ops sindri_buffer_setup_ops = {
-	.postenable = sindri_buffer_postenable,
-	.predisable = sindri_buffer_predisable,
 };
 
 static const struct iio_trigger_ops sindri_interrupt_trigger_ops = {
@@ -184,15 +164,15 @@ static irqreturn_t sindri_interrupt_handler(int irq, void *private)
 	return IRQ_HANDLED;
 }
 
-static int sindri_read_measurement(struct sindri_data *data, int reg, __be32 *val)
-{
-	struct device *dev = &data->client->dev;
-	int ret;
+// static int sindri_read_measurement(struct sindri_data *data, int reg, __be32 *val)
+// {
+// 	struct device *dev = &data->client->dev;
+// 	int ret;
 
-	ret = regmap_bulk_read(data->regmap, reg, val, sizeof(*val));
+// 	ret = regmap_bulk_read(data->regmap, reg, val, sizeof(*val));
 
-	return ret;
-}
+// 	return ret;
+// }
 
 // When reading the sysfs-files manually
 static int sindri_read_raw(struct iio_dev *indio_dev,
@@ -204,7 +184,6 @@ static int sindri_read_raw(struct iio_dev *indio_dev,
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW: {
 		int ret;
-		uint8_t short_reg;
 		__be16 long_reg;
 
 		switch (chan->type) {
@@ -222,6 +201,7 @@ static int sindri_read_raw(struct iio_dev *indio_dev,
 		return -EINVAL;
 	}
 	}
+	return -EINVAL;
 }
 
 // Other sysfs attributes
@@ -361,6 +341,7 @@ static ssize_t sindri_calibration_offset_store(struct device *dev,
 {
 	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
 	unsigned long val;
+	__be16 nval;
 	int ret;
 
 	ret = kstrtoul((const char *) buf, 10, &val);
@@ -368,7 +349,7 @@ static ssize_t sindri_calibration_offset_store(struct device *dev,
 		return -EINVAL;
 
 	// Convert to network format
-	__be16 nval = cpu_to_be16(val);
+	nval = cpu_to_be16(val);
 	ret = regmap_bulk_write(data->regmap, SINDRI_REG_COND_CAL_OFFSET,
 					       &nval, sindri_reg_size(SINDRI_REG_COND_CAL_OFFSET));
 	
@@ -401,13 +382,14 @@ static ssize_t sindri_calibration_gain_store(struct device *dev,
 	struct sindri_data *data = iio_priv(dev_to_iio_dev(dev));
 	unsigned long val;
 	int ret;
+	__be16 nval;
 
 	ret = kstrtoul((const char *) buf, 10, &val);
 	if (ret)
 		return -EINVAL;
 
 	// Convert to network format
-	__be16 nval = cpu_to_be16(val);
+	nval = cpu_to_be16(val);
 	ret = regmap_bulk_write(data->regmap, SINDRI_REG_COND_CAL_GAIN,
 					       &nval, sindri_reg_size(SINDRI_REG_COND_CAL_GAIN));
 	
@@ -566,7 +548,7 @@ unregister_trigger:
 	return ret;
 }
 
-static int sindri_remove(struct i2c_client *client)
+static void sindri_remove(struct i2c_client *client)
 {
 	struct iio_dev *indio_dev = i2c_get_clientdata(client);
 	struct sindri_data *data = iio_priv(indio_dev);
@@ -574,8 +556,6 @@ static int sindri_remove(struct i2c_client *client)
 	iio_device_unregister(indio_dev);
 	iio_triggered_buffer_cleanup(indio_dev);
 	iio_trigger_unregister(data->trig);
-
-	return 0;
 }
 
 static struct i2c_driver sindri_driver = {
