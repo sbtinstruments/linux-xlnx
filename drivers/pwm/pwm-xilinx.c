@@ -120,8 +120,9 @@ static int xilinx_pwm_apply(struct pwm_chip *chip, struct pwm_device *unused,
 	period_cycles = min_t(u64, state->period, U32_MAX * NSEC_PER_SEC);
 	period_cycles = mul_u64_u32_div(period_cycles, rate, NSEC_PER_SEC);
 	period_cycles = min_t(u64, period_cycles, priv->max + 2);
+	/* Avoid underflow */
 	if (period_cycles < 2)
-		return -ERANGE;
+		period_cycles = 2;
 
 	/* Same thing for duty cycles */
 	duty_cycles = min_t(u64, state->duty_cycle, U32_MAX * NSEC_PER_SEC);
