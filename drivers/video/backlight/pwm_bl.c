@@ -533,13 +533,6 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 	if (!state.period && (data->pwm_period_ns > 0))
 		state.period = data->pwm_period_ns;
 
-	ret = pwm_apply_state(pb->pwm, &state);
-	if (ret) {
-		dev_err(&pdev->dev, "failed to apply initial PWM state: %d\n",
-			ret);
-		goto err_alloc;
-	}
-
 	memset(&props, 0, sizeof(struct backlight_properties));
 
 	if (data->levels) {
@@ -566,9 +559,6 @@ static int pwm_backlight_probe(struct platform_device *pdev)
 		 * specified. For the non-DT case, max_brightness is usually
 		 * set to some value.
 		 */
-
-		/* Get the PWM period (in nanoseconds) */
-		pwm_get_state(pb->pwm, &state);
 
 		ret = pwm_backlight_brightness_default(&pdev->dev, data,
 						       state.period);
