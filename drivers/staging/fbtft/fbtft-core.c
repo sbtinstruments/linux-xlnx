@@ -72,12 +72,12 @@ EXPORT_SYMBOL(fbtft_dbg_hex);
 
 static int fbtft_request_one_gpio(struct fbtft_par *par,
 				  const char *name, int index,
+				  enum gpiod_flags flags,
 				  struct gpio_desc **gpiop)
 {
 	struct device *dev = par->info->device;
 
-	*gpiop = devm_gpiod_get_index_optional(dev, name, index,
-					       GPIOD_OUT_LOW);
+	*gpiop = devm_gpiod_get_index_optional(dev, name, index, flags);
 	if (IS_ERR(*gpiop))
 		return dev_err_probe(dev, PTR_ERR(*gpiop), "Failed to request %s GPIO\n", name);
 
@@ -91,35 +91,38 @@ static int fbtft_request_gpios(struct fbtft_par *par)
 {
 	int i;
 	int ret;
+	enum gpiod_flags reset_gpiod_flags = (par->pdata->skip_reset)
+	                                     ? GPIOD_ASIS : GPIOD_OUT_LOW;
 
-	ret = fbtft_request_one_gpio(par, "reset", 0, &par->gpio.reset);
+	ret = fbtft_request_one_gpio(par, "reset", 0, reset_gpiod_flags,
+	                             &par->gpio.reset);
 	if (ret)
 		return ret;
-	ret = fbtft_request_one_gpio(par, "dc", 0, &par->gpio.dc);
+	ret = fbtft_request_one_gpio(par, "dc", 0, GPIOD_OUT_LOW, &par->gpio.dc);
 	if (ret)
 		return ret;
-	ret = fbtft_request_one_gpio(par, "rd", 0, &par->gpio.rd);
+	ret = fbtft_request_one_gpio(par, "rd", 0, GPIOD_OUT_LOW, &par->gpio.rd);
 	if (ret)
 		return ret;
-	ret = fbtft_request_one_gpio(par, "wr", 0, &par->gpio.wr);
+	ret = fbtft_request_one_gpio(par, "wr", 0, GPIOD_OUT_LOW, &par->gpio.wr);
 	if (ret)
 		return ret;
-	ret = fbtft_request_one_gpio(par, "cs", 0, &par->gpio.cs);
+	ret = fbtft_request_one_gpio(par, "cs", 0, GPIOD_OUT_LOW, &par->gpio.cs);
 	if (ret)
 		return ret;
-	ret = fbtft_request_one_gpio(par, "latch", 0, &par->gpio.latch);
+	ret = fbtft_request_one_gpio(par, "latch", 0, GPIOD_OUT_LOW, &par->gpio.latch);
 	if (ret)
 		return ret;
 	for (i = 0; i < 16; i++) {
-		ret = fbtft_request_one_gpio(par, "db", i,
+		ret = fbtft_request_one_gpio(par, "db", i, GPIOD_OUT_LOW,
 					     &par->gpio.db[i]);
 		if (ret)
 			return ret;
-		ret = fbtft_request_one_gpio(par, "led", i,
+		ret = fbtft_request_one_gpio(par, "led", i, GPIOD_OUT_LOW,
 					     &par->gpio.led[i]);
 		if (ret)
 			return ret;
-		ret = fbtft_request_one_gpio(par, "aux", i,
+		ret = fbtft_request_one_gpio(par, "aux", i, GPIOD_OUT_LOW,
 					     &par->gpio.aux[i]);
 		if (ret)
 			return ret;
