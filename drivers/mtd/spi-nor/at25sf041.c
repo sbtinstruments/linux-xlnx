@@ -98,7 +98,7 @@ static int at25sf041_test_con(struct spi_device *spi)
 }
 #endif
 
-static int at25sf041_read_reg(struct spi_nor *nor, u8 opcode, u8 *buf, int len)
+static int at25sf041_read_reg(struct spi_nor *nor, u8 opcode, u8 *buf, size_t len)
 {
 	struct spi_device *spi = container_of(nor->dev, struct spi_device, dev);
 	struct spi_transfer command_t = {
@@ -130,7 +130,7 @@ static int at25sf041_read_reg(struct spi_nor *nor, u8 opcode, u8 *buf, int len)
 	return 0;
 }
 
-static int at25sf041_write_reg(struct spi_nor *nor, u8 opcode, u8 *buf, int len)
+static int at25sf041_write_reg(struct spi_nor *nor, u8 opcode, const u8 *buf, size_t len)
 {
 	struct spi_device *spi = container_of(nor->dev, struct spi_device, dev);
 	struct spi_transfer command_t = {
@@ -276,6 +276,13 @@ static ssize_t at25sf041_write(struct spi_nor *nor, loff_t to,
 	return write_len;
 }
 
+static const struct spi_nor_controller_ops at25sf041_controller_ops = {
+	.read_reg = at25sf041_read_reg,
+	.write_reg = at25sf041_write_reg,
+	.read = at25sf041_read,
+	.write = at25sf041_write,
+};
+
 static int at25sf041_probe(struct spi_device *spi)
 {
 	struct at25sf041 *at25;
@@ -294,15 +301,10 @@ static int at25sf041_probe(struct spi_device *spi)
 	}
 	spi_set_drvdata(spi, at25);
 
-	at25->nor.priv = spi;
-	at25->nor.spi = spi;
-
 	/* initialize spi_nor struct */
+	at25->nor.priv = spi;
 	at25->nor.dev = dev;
-	at25->nor.read_reg = at25sf041_read_reg;
-	at25->nor.write_reg = at25sf041_write_reg;
-	at25->nor.read = at25sf041_read;
-	at25->nor.write = at25sf041_write;
+	at25->nor.controller_ops = &at25sf041_controller_ops;
 
 	/* scan for flash chip */
 	result = spi_nor_scan(&at25->nor, "at25sf041", &hwcaps);
@@ -322,12 +324,11 @@ static int at25sf041_probe(struct spi_device *spi)
 	return 0;
 }
 
-static int at25sf041_remove(struct spi_device *spi)
+static void at25sf041_remove(struct spi_device *spi)
 {
 	struct at25sf041 *at25 = spi_get_drvdata(spi);
 	struct spi_nor *nor = &at25->nor;
 	mtd_device_unregister(&nor->mtd);
-	return 0;
 }
 
 
@@ -337,12 +338,17 @@ static const struct of_device_id at25sf041_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, at25sf041_of_match);
 
+static const struct spi_device_id spi_ids[] = {
+	{ .name = "at25sf041" },
+	{},
+};
 
 static struct spi_driver at25sf041_driver = {
 	.driver = {
 		.name = "at25sf041",
 		.of_match_table = at25sf041_of_match
 	},
+	.id_table = spi_ids,
 	.probe = at25sf041_probe,
 	.remove = at25sf041_remove,
 };
