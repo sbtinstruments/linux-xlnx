@@ -1560,6 +1560,7 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
 	struct spi_nor_flash_parameter *params;
+	struct spi_device *spi = (nor->spimem) ? nor->spimem->spi : nor->priv;
 	u32 addr, len, offset, cur_cs_num = 0;
 	uint32_t rem;
 	int ret;
@@ -1584,7 +1585,8 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 	if (ret)
 		return ret;
 
-	reinit_completion(&nor->spimem->request_completion);
+	if (nor->spimem)
+		reinit_completion(&nor->spimem->request_completion);
 
 	if (!(nor->flags & SNOR_F_HAS_PARALLEL)) {
 		/* whole-chip erase? */
@@ -1592,7 +1594,7 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 			unsigned long timeout;
 
 			while ((cur_cs_num < SNOR_FLASH_CNT_MAX) && params) {
-				nor->spimem->spi->cs_index_mask = 1 << cur_cs_num;
+				spi->cs_index_mask = 1 << cur_cs_num;
 				ret = spi_nor_write_enable(nor);
 				if (ret)
 					goto erase_err;
@@ -1634,7 +1636,7 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 				sz += params->size;
 			}
 			while (len) {
-				nor->spimem->spi->cs_index_mask = 1 << cur_cs_num;
+				spi->cs_index_mask = 1 << cur_cs_num;
 				ret = spi_nor_write_enable(nor);
 				if (ret)
 					goto erase_err;
@@ -1695,7 +1697,7 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 			while (len) {
 				erase_len = (len > (sz - addr)) ? (sz - addr) : len;
 				offset = addr;
-				nor->spimem->spi->cs_index_mask = 1 << cur_cs_num;
+				spi->cs_index_mask = 1 << cur_cs_num;
 				if (nor->flags & SNOR_F_HAS_STACKED) {
 					params = spi_nor_get_params(nor, cur_cs_num);
 					offset -= (sz - params->size);
@@ -1710,7 +1712,7 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 			}
 		}
 	} else {
-		nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+		spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 
 		/* whole-chip erase? */
 		if (len == mtd->size && !(nor->flags &
@@ -1803,7 +1805,8 @@ static int spi_nor_erase(struct mtd_info *mtd, struct erase_info *instr)
 	ret = spi_nor_write_disable(nor);
 
 erase_err:
-	complete(&nor->spimem->request_completion);
+	if (nor->spimem)
+		complete(&nor->spimem->request_completion);
 	spi_nor_unlock_and_unprep(nor);
 
 	return ret;
@@ -1935,6 +1938,10 @@ static const struct flash_info *spi_nor_match_id(struct spi_nor *nor,
 	const struct flash_info *part;
 	unsigned int i, j;
 
+	if (!nor->spimem) {
+		return NULL;
+	}
+
 	for (i = 0; i < SPI_NOR_MAX_ID_LEN; i++)
 		nor->spimem->device_id[i] = id[i];
 
@@ -1978,6 +1985,7 @@ static int spi_nor_read(struct mtd_info *mtd, loff_t from, size_t len,
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
 	struct spi_nor_flash_parameter *params;
+	struct spi_device *spi = (nor->spimem) ? nor->spimem->spi : nor->priv;
 	u8 bank, cur_bank, nxt_bank;
 	ssize_t ret, read_len;
 	u32 cur_cs_num = 0, rem_bank_len = 0, bank_size;
@@ -2019,7 +2027,8 @@ static int spi_nor_read(struct mtd_info *mtd, loff_t from, size_t len,
 	if (ret)
 		return ret;
 
-	reinit_completion(&nor->spimem->request_completion);
+	if (nor->spimem)
+		reinit_completion(&nor->spimem->request_completion);
 
 	while (len) {
 		if (nor->addr_nbytes == 3) {
@@ -2036,11 +2045,11 @@ static int spi_nor_read(struct mtd_info *mtd, loff_t from, size_t len,
 		addr = from;
 
 		if (nor->flags & SNOR_F_HAS_PARALLEL) {
-			nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+			spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 			read_len = len;
 			addr /= 2;
 		} else {
-			nor->spimem->spi->cs_index_mask = 1 << cur_cs_num;
+			spi->cs_index_mask = 1 << cur_cs_num;
 			read_len = (len > (sz - addr)) ? (sz - addr) : len;
 			params = spi_nor_get_params(nor, cur_cs_num);
 			addr -= (sz - params->size);
@@ -2059,7 +2068,7 @@ static int spi_nor_read(struct mtd_info *mtd, loff_t from, size_t len,
 			 * for single and dual stacked mode and 32MB for dual
 			 * parallel mode.
 			 */
-			if (nor->spimem->spi->multi_die) {
+			if (spi->multi_die) {
 				unsigned long long addr_tmp = addr;
 				bank_size = OFFSET_16_MB;
 				if (nor->flags & SNOR_F_HAS_PARALLEL)
@@ -2153,7 +2162,8 @@ read_err:
 	if (is_ofst_odd)
 		kfree(readbuf);
 
-	complete(&nor->spimem->request_completion);
+	if (nor->spimem)
+		complete(&nor->spimem->request_completion);
 	spi_nor_unlock_and_unprep(nor);
 	return ret;
 }
@@ -2168,6 +2178,7 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 {
 	struct spi_nor *nor = mtd_to_spi_nor(mtd);
 	struct spi_nor_flash_parameter *params;
+	struct spi_device *spi = (nor->spimem) ? nor->spimem->spi : nor->priv;
 	size_t page_offset, page_remain, i;
 	u32 page_size, cur_cs_num = 0, rem_bank_len = 0;
 	loff_t addr;
@@ -2218,7 +2229,8 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 	if (ret)
 		return ret;
 
-	reinit_completion(&nor->spimem->request_completion);
+	if (nor->spimem)
+		reinit_completion(&nor->spimem->request_completion);
 
 	for (i = 0; i < len; ) {
 		ssize_t written;
@@ -2251,10 +2263,10 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 		page_remain = min_t(size_t, page_size - page_offset, len - i);
 
 		if (nor->flags & SNOR_F_HAS_PARALLEL) {
-			nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+			spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 			addr /= 2;
 		} else {
-			nor->spimem->spi->cs_index_mask = 1 << cur_cs_num;
+			spi->cs_index_mask = 1 << cur_cs_num;
 			params = spi_nor_get_params(nor, cur_cs_num);
 			addr -= (sz - params->size);
 		}
@@ -2326,7 +2338,8 @@ static int spi_nor_write(struct mtd_info *mtd, loff_t to, size_t len,
 	}
 
 write_err:
-	complete(&nor->spimem->request_completion);
+	if (nor->spimem)
+		complete(&nor->spimem->request_completion);
 	spi_nor_unlock_and_unprep(nor);
 	return ret;
 }
@@ -2828,6 +2841,7 @@ static int spi_nor_default_setup(struct spi_nor *nor,
 
 static int spi_nor_set_addr_nbytes(struct spi_nor *nor)
 {
+	struct spi_device *spi = (nor->spimem) ? nor->spimem->spi : nor->priv;
 	struct spi_nor_flash_parameter *params = spi_nor_get_params(nor, 0);
 	struct device_node *np = spi_nor_get_flash_node(nor);
 	struct device_node *np_spi;
@@ -2866,7 +2880,7 @@ static int spi_nor_set_addr_nbytes(struct spi_nor *nor)
 				 * In parallel mode both chip selects i.e., CS0 &
 				 * CS1 need to be asserted simulatneously.
 				 */
-				nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+				spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 				params->set_4byte_addr_mode(nor, false);
 			} else {
 				for (idx = 0; idx < SNOR_FLASH_CNT_MAX; idx++) {
@@ -2876,12 +2890,12 @@ static int spi_nor_set_addr_nbytes(struct spi_nor *nor)
 						 * Set the appropriate CS index before
 						 * issuing the command.
 						 */
-						nor->spimem->spi->cs_index_mask = 0x01 << idx;
+						spi->cs_index_mask = 0x01 << idx;
 						params->set_4byte_addr_mode(nor, false);
 					}
 				}
 			}
-			nor->spimem->spi->cs_index_mask = 0x01;
+			spi->cs_index_mask = 0x01;
 			status = read_ear(nor, (struct flash_info *)nor->info);
 			if (status < 0)
 				dev_warn(nor->dev, "failed to read ear reg\n");
@@ -2890,7 +2904,7 @@ static int spi_nor_set_addr_nbytes(struct spi_nor *nor)
 		} else if (of_property_match_string(np_spi, "compatible",
 						    "xlnx,xps-spi-2.00.a") >= 0) {
 			nor->addr_nbytes = 3;
-			nor->spimem->spi->cs_index_mask = 0x01;
+			spi->cs_index_mask = 0x01;
 			params->set_4byte_addr_mode(nor, false);
 
 		} else {
@@ -2901,7 +2915,7 @@ static int spi_nor_set_addr_nbytes(struct spi_nor *nor)
 				 * In parallel mode both chip selects i.e., CS0 &
 				 * CS1 need to be asserted simulatneously.
 				 */
-				nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+				spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 				params->set_4byte_addr_mode(nor, true);
 			} else {
 				for (idx = 0; idx < SNOR_FLASH_CNT_MAX; idx++) {
@@ -2911,7 +2925,7 @@ static int spi_nor_set_addr_nbytes(struct spi_nor *nor)
 						 * Set the appropriate CS index before
 						 * issuing the command.
 						 */
-						nor->spimem->spi->cs_index_mask = 0x01 << idx;
+						spi->cs_index_mask = 0x01 << idx;
 						params->set_4byte_addr_mode(nor, true);
 					}
 				}
@@ -3374,6 +3388,7 @@ static int spi_nor_octal_dtr_enable(struct spi_nor *nor, bool enable)
  */
 static int spi_nor_quad_enable(struct spi_nor *nor)
 {
+	struct spi_device *spi = (nor->spimem) ? nor->spimem->spi : nor->priv;
 	struct spi_nor_flash_parameter *params;
 	int err, idx;
 
@@ -3389,7 +3404,7 @@ static int spi_nor_quad_enable(struct spi_nor *nor)
 		 * In parallel mode both chip selects i.e., CS0 &
 		 * CS1 need to be asserted simulatneously.
 		 */
-		nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+		spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 		err = params->quad_enable(nor);
 		if (err)
 			return err;
@@ -3407,7 +3422,7 @@ static int spi_nor_quad_enable(struct spi_nor *nor)
 				 * Set the appropriate CS index before
 				 * issuing the command.
 				 */
-				nor->spimem->spi->cs_index_mask = 1 << idx;
+				spi->cs_index_mask = 1 << idx;
 
 				err = params->quad_enable(nor);
 				if (err)
@@ -3420,6 +3435,7 @@ static int spi_nor_quad_enable(struct spi_nor *nor)
 
 static int spi_nor_init(struct spi_nor *nor)
 {
+	struct spi_device *spi = (nor->spimem) ? nor->spimem->spi : nor->priv;
 	struct spi_nor_flash_parameter *params;
 	int err, idx;
 
@@ -3476,7 +3492,7 @@ static int spi_nor_init(struct spi_nor *nor)
 			 * In parallel mode both chip selects i.e., CS0 &
 			 * CS1 need to be asserted simulatneously.
 			 */
-			nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+			spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 			params = spi_nor_get_params(nor, 0);
 			params->set_4byte_addr_mode(nor, true);
 		} else {
@@ -3487,7 +3503,7 @@ static int spi_nor_init(struct spi_nor *nor)
 					 * Select the appropriate CS index before
 					 * issuing the command.
 					 */
-					nor->spimem->spi->cs_index_mask = 1 << idx;
+					spi->cs_index_mask = 1 << idx;
 					err = params->set_4byte_addr_mode(nor, true);
 					if (err && err != -ENOTSUPP)
 						return err;
@@ -3607,6 +3623,7 @@ static void spi_nor_put_device(struct mtd_info *mtd)
 
 void spi_nor_restore(struct spi_nor *nor)
 {
+	struct spi_device *spi = (nor->spimem) ? nor->spimem->spi : nor->priv;
 	struct spi_nor_flash_parameter *params;
 	int idx;
 
@@ -3618,7 +3635,7 @@ void spi_nor_restore(struct spi_nor *nor)
 			 * In parallel mode both chip selects i.e., CS0 &
 			 * CS1 need to be asserted simulatneously.
 			 */
-			nor->spimem->spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
+			spi->cs_index_mask = SPI_NOR_ENABLE_MULTI_CS;
 			params = spi_nor_get_params(nor, 0);
 			params->set_4byte_addr_mode(nor, false);
 		} else {
@@ -3629,7 +3646,7 @@ void spi_nor_restore(struct spi_nor *nor)
 					 * Select the appropriate CS index before
 					 * issuing the command.
 					 */
-					nor->spimem->spi->cs_index_mask = 1 << idx;
+					spi->cs_index_mask = 1 << idx;
 					params->set_4byte_addr_mode(nor, false);
 				}
 			}
