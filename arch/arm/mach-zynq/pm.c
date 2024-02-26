@@ -133,7 +133,7 @@ static void __iomem *zynq_pm_remap_ocm(void)
 		dev = &(of_find_device_by_node(np)->dev);
 
 		/* Get OCM pool from device tree or platform data */
-		pool = gen_pool_get(dev, NULL);
+		pool = gen_pool_get(dev, "ocm-sram");
 		if (!pool) {
 			pr_warn("%s: OCM pool is not available\n", __func__);
 			return NULL;
