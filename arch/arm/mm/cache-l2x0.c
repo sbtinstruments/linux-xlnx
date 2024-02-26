@@ -805,7 +805,7 @@ static int __init __l2c_init(const struct l2c_init_data *data,
 	aux |= aux_val;
 
 	if (old_aux != aux)
-		pr_warn("L2C: DT/platform modifies aux control register: 0x%08x -> 0x%08x\n",
+		pr_info("L2C: DT/platform modifies aux control register: 0x%08x -> 0x%08x\n",
 		        old_aux, aux);
 
 	/* Determine the number of ways */
@@ -1788,7 +1788,7 @@ int __init l2x0_of_init(u32 aux_val, u32 aux_mask)
 
 	old_aux = readl_relaxed(l2x0_base + L2X0_AUX_CTRL);
 	if (old_aux != ((old_aux & aux_mask) | aux_val)) {
-		pr_warn("L2C: platform modifies aux control register: 0x%08x -> 0x%08x\n",
+		pr_info("L2C: platform modifies aux control register: 0x%08x -> 0x%08x\n",
 		        old_aux, (old_aux & aux_mask) | aux_val);
 	} else if (aux_mask != ~0U && aux_val != 0) {
 		pr_alert("L2C: platform provided aux values match the hardware, so have no effect.  Please remove them.\n");
