@@ -657,6 +657,11 @@ static const struct of_device_id of_ltc214x_match[] = {
 	{},
 };
 
+static const struct spi_device_id ltc214x_id_table[] = {
+	{ .name = "ltc2145" },
+	{},
+};
+
 static struct spi_driver ltc214x_driver = {
 	.probe = ltc214x_spi_probe,
 	.driver = {
@@ -664,6 +669,7 @@ static struct spi_driver ltc214x_driver = {
 		.of_match_table = of_match_ptr(of_ltc214x_match),
 		.pm = &ltc214x_pm_ops,
 	},
+	.id_table = ltc214x_id_table,
 };
 
 module_spi_driver(ltc214x_driver);
