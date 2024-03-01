@@ -22,6 +22,7 @@
 #include <linux/mutex.h>
 #include <linux/mfd/core.h>
 #include <linux/regmap.h>
+#include <linux/reboot.h>
 
 #include <linux/mfd/da9063/core.h>
 #include <linux/mfd/da9063/registers.h>
@@ -203,12 +204,69 @@ static const struct mfd_cell da9063_devs[] = {
 	},
 };
 
-static struct i2c_client *da9063_i2c_client;
-
-static void da9063_power_off(void)
+static int da9063_power_off_handler(struct sys_off_data *data)
 {
-	i2c_smbus_write_byte_data(da9063_i2c_client, DA9063_REG_CONTROL_F,
-	                          DA9063_SHUTDOWN);
+	struct da9063 *da9063 = data->cb_data;
+	struct i2c_client *client = to_i2c_client(da9063->dev);
+	int ret;
+
+	dev_dbg(da9063->dev, "Setting the DA9063_SHUTDOWN bit to "
+	                     "power off the system\n");
+	ret = i2c_smbus_write_byte_data(client, DA9063_REG_CONTROL_F,
+	                                DA9063_SHUTDOWN);
+	if (ret < 0)
+		dev_alert(da9063->dev, "Failed to power off: %d\n", ret);
+
+	return NOTIFY_DONE;
+}
+
+static int da9063_restart_handler(struct sys_off_data *data)
+{
+	struct da9063 *da9063 = data->cb_data;
+	struct i2c_client *client = to_i2c_client(da9063->dev);
+	int ret;
+
+	/* This function restarts the system by setting the "wake up" bit and
+	 * unsetting the "system enable" bit. In practice, this brings the DA906X
+	 * chip into "POWER-DOWN mode" for a brief period.
+	 *
+	 * It is possible to go a step deeper into "Delivery (and RTC) mode" but
+	 * this requires that we:
+	 *
+	 *  1. Set an RTC alarm for, say, 1 second into the future.
+	 *  2. Power off the system via the DA9063_SHUTDOWN bit.
+	 *
+	 * Step 2 is easy (see the "da9063_power_off_handler" function).
+	 * Step 1, however, is a bit more tricky.
+	 *
+	 * For now, we just use "POWER-DOWN mode" until there is a use case
+	 * for a "deeper" (more low-level) reset.
+	 */
+
+	dev_dbg(da9063->dev, "Setting the DA9063_WAKE_UP bit to "
+	                     "wake the system again once it is powered down\n");
+	ret = i2c_smbus_write_byte_data(client, DA9063_REG_CONTROL_F,
+	                                DA9063_WAKE_UP);
+	if (ret < 0) {
+		dev_alert(da9063->dev, "Failed to set DA9063_WAKE_UP bit: %d\n", ret);
+		return NOTIFY_DONE;
+	}
+
+	dev_dbg(da9063->dev, "Clearing the DA9063_SYSTEM_EN bit to "
+	                     "power down the system\n");
+	/* Note that we mask out the bits that we do not want to clear using
+	 * the "M_"-prefixed mask bits.
+	 */
+	ret = i2c_smbus_write_byte_data(client, DA9063_REG_CONTROL_A,
+	                                DA9063_M_POWER_EN | DA9063_M_POWER1_EN);
+	if (ret < 0) {
+		dev_alert(da9063->dev,
+		          "Failed to clear the DA9063_SYSTEM_EN bit: %d\n",
+				  ret);
+		return NOTIFY_DONE;
+	}
+
+	return NOTIFY_DONE;
 }
 
 static int da9063_clear_fault_log(struct da9063 *da9063)
@@ -300,12 +358,41 @@ int da9063_device_init(struct da9063 *da9063, unsigned int irq)
 	}
 
 	if (of_device_is_system_power_controller(da9063->dev->of_node)) {
-		if (!pm_power_off) {
-			da9063_i2c_client = to_i2c_client(da9063->dev);
-			pm_power_off = da9063_power_off;
-		} else {
-			dev_err(da9063->dev, "Failed to set power off function. "
-			                     "Another function is already registered.\n");
+		if (pm_power_off) {
+			dev_warn(da9063->dev, "The global power off function (pm_power_off) is "
+			                      "already set. We'll unset it and use the new "
+								  "sys-off handler API (e.g., "
+								  "register_restart_handler).\n");
+			pm_power_off = NULL;
+		}
+
+		ret = devm_register_power_off_handler(da9063->dev,
+		                                      &da9063_power_off_handler,
+											  da9063);
+		if (ret) {
+			dev_err(da9063->dev, "Failed to register power off handler\n");
+			return ret;
+		}
+
+		/* We know that, e.g., the ZYNQ SLCR-based restart handler has priority
+		 * SYS_OFF_PRIO_HIGH (192). We want the PMIC (da9063) to have higher
+		 * priority than this because the PMIC provides a sys-off mechanism that
+		 * is closer to the hardware. Therefore, we use priority
+		 * SYS_OFF_PRIO_HIGH + 1 = 193.
+		 *
+		 * Note that the "da9063_wdt" device (the watchdog device) also registers
+		 * a restart handler (function "da9063_wdt_restart") with priority 128.
+		 * Said handler, however, does not actually do a proper system restart.
+		 * In fact, it merely does a power off (setting the DA9063_SHUTDOWN bit).
+		 */
+		ret = devm_register_sys_off_handler(da9063->dev,
+		                                    SYS_OFF_MODE_RESTART,
+		                                    SYS_OFF_PRIO_HIGH + 1,
+		                                    &da9063_restart_handler,
+											da9063);
+		if (ret) {
+			dev_err(da9063->dev, "Failed to register restart handler\n");
+			return ret;
 		}
 	}
 
