@@ -28,103 +28,49 @@
  * approach is then used to select the correct regmap tables.
  */
 
-#define DA9063_REG_PAGE_SIZE		0x100
-#define DA9063_REG_PAGED_ADDR_MASK	0xFF
-
-enum da9063_page_sel_buf_fmt {
-	DA9063_PAGE_SEL_BUF_PAGE_REG = 0,
-	DA9063_PAGE_SEL_BUF_PAGE_VAL,
-	DA9063_PAGE_SEL_BUF_SIZE,
-};
-
-enum da9063_paged_read_msgs {
-	DA9063_PAGED_READ_MSG_PAGE_SEL = 0,
-	DA9063_PAGED_READ_MSG_REG_SEL,
-	DA9063_PAGED_READ_MSG_DATA,
-	DA9063_PAGED_READ_MSG_CNT,
-};
-
-static int da9063_i2c_blockreg_read(struct i2c_client *client, u16 addr,
-				    u8 *buf, int count)
-{
-	struct i2c_msg xfer[DA9063_PAGED_READ_MSG_CNT];
-	u8 page_sel_buf[DA9063_PAGE_SEL_BUF_SIZE];
-	u8 page_num, paged_addr;
-	int ret;
-
-	/* Determine page info based on register address */
-	page_num = (addr / DA9063_REG_PAGE_SIZE);
-	if (page_num > 1) {
-		dev_err(&client->dev, "Invalid register address provided\n");
-		return -EINVAL;
-	}
-
-	paged_addr = (addr % DA9063_REG_PAGE_SIZE) & DA9063_REG_PAGED_ADDR_MASK;
-	page_sel_buf[DA9063_PAGE_SEL_BUF_PAGE_REG] = DA9063_REG_PAGE_CON;
-	page_sel_buf[DA9063_PAGE_SEL_BUF_PAGE_VAL] =
-		(page_num << DA9063_I2C_PAGE_SEL_SHIFT) & DA9063_REG_PAGE_MASK;
-
-	/* Write reg address, page selection */
-	xfer[DA9063_PAGED_READ_MSG_PAGE_SEL].addr = client->addr;
-	xfer[DA9063_PAGED_READ_MSG_PAGE_SEL].flags = 0;
-	xfer[DA9063_PAGED_READ_MSG_PAGE_SEL].len = DA9063_PAGE_SEL_BUF_SIZE;
-	xfer[DA9063_PAGED_READ_MSG_PAGE_SEL].buf = page_sel_buf;
-
-	/* Select register address */
-	xfer[DA9063_PAGED_READ_MSG_REG_SEL].addr = client->addr;
-	xfer[DA9063_PAGED_READ_MSG_REG_SEL].flags = 0;
-	xfer[DA9063_PAGED_READ_MSG_REG_SEL].len = sizeof(paged_addr);
-	xfer[DA9063_PAGED_READ_MSG_REG_SEL].buf = &paged_addr;
-
-	/* Read data */
-	xfer[DA9063_PAGED_READ_MSG_DATA].addr = client->addr;
-	xfer[DA9063_PAGED_READ_MSG_DATA].flags = I2C_M_RD;
-	xfer[DA9063_PAGED_READ_MSG_DATA].len = count;
-	xfer[DA9063_PAGED_READ_MSG_DATA].buf = buf;
-
-	ret = i2c_transfer(client->adapter, xfer, DA9063_PAGED_READ_MSG_CNT);
-	if (ret < 0) {
-		dev_err(&client->dev, "Paged block read failed: %d\n", ret);
-		return ret;
-	}
-
-	if (ret != DA9063_PAGED_READ_MSG_CNT) {
-		dev_err(&client->dev, "Paged block read failed to complete\n");
-		return -EIO;
-	}
-
-	return 0;
-}
-
-enum {
-	DA9063_DEV_ID_REG = 0,
-	DA9063_VAR_ID_REG,
-	DA9063_CHIP_ID_REGS,
-};
+#define DA9063_ADDR_MASK           0xFF
 
 static int da9063_get_device_type(struct i2c_client *i2c, struct da9063 *da9063)
 {
-	u8 buf[DA9063_CHIP_ID_REGS];
+	s32 device_id, variant_id;
 	int ret;
 
-	ret = da9063_i2c_blockreg_read(i2c, DA9063_REG_DEVICE_ID, buf,
-				       DA9063_CHIP_ID_REGS);
-	if (ret)
+	/* Select register page 2 */
+	ret = i2c_smbus_write_byte_data(i2c, DA9063_REG_PAGE_CON, DA9063_REG_PAGE2);
+	if (ret < 0) {
+		dev_err(da9063->dev, "Could not select register page: %d\n", ret);
 		return ret;
+	}
 
-	if (buf[DA9063_DEV_ID_REG] != PMIC_CHIP_ID_DA9063) {
+	/* Get device ID */
+	ret = i2c_smbus_read_byte_data(i2c, DA9063_REG_DEVICE_ID & DA9063_ADDR_MASK);
+	if (ret < 0) {
+		dev_err(da9063->dev, "Could not read device ID register: %d\n", ret);
+		return ret;
+	}
+	device_id = ret;
+
+	/* Get variant ID */
+	ret = i2c_smbus_read_byte_data(i2c, DA9063_REG_VARIANT_ID & DA9063_ADDR_MASK);
+	if (ret < 0) {
+		dev_err(da9063->dev, "Could not read variant ID register: %d\n", ret);
+		return ret;
+	}
+	variant_id = ret;
+
+	if (device_id != PMIC_CHIP_ID_DA9063) {
 		dev_err(da9063->dev,
 			"Invalid chip device ID: 0x%02x\n",
-			buf[DA9063_DEV_ID_REG]);
+			device_id);
 		return -ENODEV;
 	}
 
 	dev_info(da9063->dev,
 		 "Device detected (chip-ID: 0x%02X, var-ID: 0x%02X)\n",
-		 buf[DA9063_DEV_ID_REG], buf[DA9063_VAR_ID_REG]);
+		 device_id, variant_id);
 
 	da9063->variant_code =
-		(buf[DA9063_VAR_ID_REG] & DA9063_VARIANT_ID_MRC_MASK)
+		(variant_id & DA9063_VARIANT_ID_MRC_MASK)
 		>> DA9063_VARIANT_ID_MRC_SHIFT;
 
 	return 0;
