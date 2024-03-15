@@ -175,7 +175,7 @@ static int slf3x_do_meas(struct slf3x_data *data) {
 	ret = i2c_master_recv(data->client, data_buf, size);
 	// TODO: crc check
 	// i2c_master_recv returns negative error codes
-	return ret < 0;
+	return ret;
 }
 
 static irqreturn_t slf3x_trigger_handler(int irq, void *p)
@@ -186,7 +186,7 @@ static irqreturn_t slf3x_trigger_handler(int irq, void *p)
 	int ret;
 
 	ret = slf3x_do_meas(data);
-	if (ret)
+	if (ret < 0)
 		goto err;
 
 	iio_push_to_buffers_with_timestamp(indio_dev, data->buffer.raw_words,
@@ -209,7 +209,11 @@ static int slf3x_read_raw(struct iio_dev *indio_dev,
 	s16 *sval;
 
 	// Get all data from sensor.
-	slf3x_do_meas(data);
+	ret = slf3x_do_meas(data);
+	if (ret < 0) {
+		return ret;
+	}
+	
 	words = data->buffer.raw_words;
 
 	switch (mask) {
