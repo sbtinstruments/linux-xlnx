@@ -39,6 +39,7 @@ obj-y += potentiometer/
 obj-y += potentiostat/
 obj-y += pressure/
 obj-y += proximity/
+obj-y += pumps/
 obj-y += resolver/
 obj-y += temperature/
 obj-y += test/
