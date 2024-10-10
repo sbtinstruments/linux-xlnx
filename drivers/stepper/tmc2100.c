@@ -11,7 +11,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/stepper.h>
 
-#define TMC2100_REF_VOLTAGE_LOGICAL_MIN  500
+#define TMC2100_REF_VOLTAGE_LOGICAL_MIN    0
 #define TMC2100_REF_VOLTAGE_LOGICAL_MAX 2500
 #define TMC2100_CFG_SIZE 6 /* Doesn't include cfg6_enn */
 
