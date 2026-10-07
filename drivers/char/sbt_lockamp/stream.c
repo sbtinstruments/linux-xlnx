@@ -79,11 +79,11 @@ static void lockamp_data_loss(struct lockamp *lockamp, const char *why)
 	dev_warn_ratelimited(lockamp->dev, "Data loss. %s.\n", why);
 }
 
+/* A plain write: a read-modify-write would clear a set overflow flag */
 static int lockamp_stream_enable(struct lockamp *lockamp, bool enable)
 {
-	return regmap_update_bits(lockamp->regmap, LOCKAMP_REG_STREAM_CONTROL,
-				  LOCKAMP_STREAM_ENABLE,
-				  enable ? LOCKAMP_STREAM_ENABLE : 0);
+	return regmap_write(lockamp->regmap, LOCKAMP_REG_STREAM_CONTROL,
+			    enable ? LOCKAMP_STREAM_ENABLE : 0);
 }
 
 /* Reads and clears the FPGA's sticky overflow flag */
