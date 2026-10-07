@@ -170,14 +170,22 @@ static int lockamp_stream_go(struct lockamp *lockamp)
 	return lockamp_stream_enable(lockamp, true);
 }
 
-/* Stops the FPGA and the DMA. Filled periods stay readable. */
+/*
+ * Stops the DMA, then the FPGA. Filled periods stay readable. Call with
+ * "running" false, so no callback re-arms a period meanwhile.
+ *
+ * The S2MM channel halts only once its current transfer has its data. So
+ * the FPGA must still stream while the DMA halts: with the stream disabled
+ * first, the halt waits out xilinx_dma's 1 s timeout ("Cannot stop
+ * channel") and the channel gets reset anyway.
+ */
 static void lockamp_stream_halt(struct lockamp *lockamp)
 {
 	struct lockamp_stream *s = &lockamp->stream;
 	struct lockamp_buf *buf;
 
-	lockamp_stream_enable(lockamp, false);
 	dmaengine_terminate_sync(s->chan);
+	lockamp_stream_enable(lockamp, false);
 
 	spin_lock_bh(&s->lock);
 	while ((buf = lockamp_bufq_pop(&s->in_flight)))
@@ -194,7 +202,13 @@ static void lockamp_stream_restart(struct work_struct *work)
 
 	mutex_lock(&s->control_m);
 	if (s->running) {
+		spin_lock_bh(&s->lock);
+		s->running = false;
+		spin_unlock_bh(&s->lock);
 		lockamp_stream_halt(lockamp);
+		spin_lock_bh(&s->lock);
+		s->running = true;
+		spin_unlock_bh(&s->lock);
 		if (lockamp_stream_go(lockamp))
 			dev_err(lockamp->dev, "Failed to restart the sample stream\n");
 	}
