@@ -17,7 +17,15 @@
 #define LOCKAMP_REG_GEN1_SCALE      0x00C
 #define LOCKAMP_REG_GEN2_SCALE      0x038 /* Note the jump in address */
 #define LOCKAMP_REG_ADC_BUFFER      0x010
-/* Registers 0x014 to 0x027 (both inclusive) are deprecated */
+/* The sample stream (sbt/drupe#40) */
+#define LOCKAMP_REG_STREAM_CONTROL  0x01C
+#define LOCKAMP_STREAM_ENABLE       BIT(0)
+#define LOCKAMP_REG_STREAM_PERIOD   0x020 /* Samples per packet (tlast) */
+#define LOCKAMP_REG_SAMPLE_SIGN     0x024 /* Bit n set: negate site n */
+#define LOCKAMP_REG_STREAM_STATUS   0x03C
+#define LOCKAMP_STREAM_OVERFLOW     BIT(0) /* Sticky; write 1 to clear */
+#define LOCKAMP_VERSION_STREAM      0xABBA0023
+/* Registers 0x014 to 0x018 (both inclusive) are deprecated */
 #define LOCKAMP_REG_DAC_DATA_BITS   0x028
 #define LOCKAMP_REG_HB_FILTERS      0x02C
 #define LOCKAMP_REG_FIR_CYCLES      0x030
@@ -33,17 +41,6 @@
 #define LOCKAMP_REG_GEN2_STEP_INT   0x060
 #define LOCKAMP_REG_GEN2_STEP_FRAC  0x064
 #define LOCKAMP_REG_GEN2_LOCK_PHASE 0x068 /* 16 bit register */
-
-/*
- * The sample stream. PLACEHOLDER: offsets, bits and the version are
- * proposals until sbt/drupe#40 records the FPGA's.
- */
-#define LOCKAMP_REG_STREAM_CONTROL  0x070
-#define LOCKAMP_STREAM_ENABLE       BIT(0)
-#define LOCKAMP_STREAM_OVERFLOW     BIT(1) /* Sticky; write 1 to clear */
-#define LOCKAMP_REG_STREAM_PERIOD   0x074 /* Words per packet (tlast) */
-#define LOCKAMP_REG_SAMPLE_SIGN     0x078 /* Bit n set: negate site n */
-#define LOCKAMP_VERSION_STREAM      0xABBA0023
 
 #define LOCKAMP_REG_DEBUG0          0x080
 #define LOCKAMP_REG_DEBUG_CONTROL   0x084

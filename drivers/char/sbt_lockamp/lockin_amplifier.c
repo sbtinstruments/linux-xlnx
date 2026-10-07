@@ -102,9 +102,7 @@ static bool lockamp_reg_gap(struct device *dev, unsigned int reg) {
 	/* The retired FIFO registers: a read popped data */
 	if (reg > LOCKAMP_REG_VERSION && reg < LOCKAMP_REG_GEN1_SCALE)
 		return true;
-	if (reg > LOCKAMP_REG_GEN2_LOCK_PHASE && reg < LOCKAMP_REG_STREAM_CONTROL)
-		return true;
-	if (reg > LOCKAMP_REG_SAMPLE_SIGN && reg < LOCKAMP_REG_DEBUG0) {
+	if (LOCKAMP_REG_GEN2_LOCK_PHASE < reg && reg < LOCKAMP_REG_DEBUG0) {
 		return true;
 	}
 	if (LOCKAMP_REG_DEBUG_CONTROL < reg && reg < LOCKAMP_REG_FIR_COEF_BASE) {
@@ -135,6 +133,7 @@ static bool lockamp_volatile_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 	case LOCKAMP_REG_STREAM_CONTROL:
+	case LOCKAMP_REG_STREAM_STATUS:
 	case LOCKAMP_REG_ADC_BUFFER:
 		return true;
 	}

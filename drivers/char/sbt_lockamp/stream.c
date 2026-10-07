@@ -16,6 +16,9 @@
  * A buffer goes free -> in flight -> filled -> (read) -> free. When no
  * buffer is free the reader is behind: the period goes to a discard
  * buffer and counts as data loss. The DMA never stalls on the reader.
+ *
+ * When the FPGA's own buffer overflows (the DMA stalled), the stream
+ * restarts. Filled periods stay readable across a restart.
  */
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
@@ -79,7 +82,6 @@ static void lockamp_data_loss(struct lockamp *lockamp, const char *why)
 	dev_warn_ratelimited(lockamp->dev, "Data loss. %s.\n", why);
 }
 
-/* A plain write: a read-modify-write would clear a set overflow flag */
 static int lockamp_stream_enable(struct lockamp *lockamp, bool enable)
 {
 	return regmap_write(lockamp->regmap, LOCKAMP_REG_STREAM_CONTROL,
@@ -89,14 +91,14 @@ static int lockamp_stream_enable(struct lockamp *lockamp, bool enable)
 /* Reads and clears the FPGA's sticky overflow flag */
 static bool lockamp_stream_overflowed(struct lockamp *lockamp)
 {
-	u32 control;
+	u32 status;
 
-	if (regmap_read(lockamp->regmap, LOCKAMP_REG_STREAM_CONTROL, &control))
+	if (regmap_read(lockamp->regmap, LOCKAMP_REG_STREAM_STATUS, &status))
 		return false;
-	if (!(control & LOCKAMP_STREAM_OVERFLOW))
+	if (!(status & LOCKAMP_STREAM_OVERFLOW))
 		return false;
-	regmap_write(lockamp->regmap, LOCKAMP_REG_STREAM_CONTROL,
-		     (control & LOCKAMP_STREAM_ENABLE) | LOCKAMP_STREAM_OVERFLOW);
+	regmap_write(lockamp->regmap, LOCKAMP_REG_STREAM_STATUS,
+		     LOCKAMP_STREAM_OVERFLOW);
 	return true;
 }
 
@@ -142,6 +144,63 @@ err:
 	return -EIO;
 }
 
+/* Arms every in-flight period, then lets the FPGA stream */
+static int lockamp_stream_go(struct lockamp *lockamp)
+{
+	struct lockamp_stream *s = &lockamp->stream;
+	int ret = 0;
+	int i;
+
+	/* The overflow flag is sticky: clear it from the last run */
+	lockamp_stream_overflowed(lockamp);
+
+	spin_lock_bh(&s->lock);
+	for (i = 0; i < LOCKAMP_STREAM_IN_FLIGHT; ++i) {
+		ret = lockamp_stream_arm(lockamp);
+		if (ret)
+			break;
+		/* Starts the first batch, so the rest waits as the next one */
+		if (i == LOCKAMP_STREAM_BATCH - 1)
+			dma_async_issue_pending(s->chan);
+	}
+	spin_unlock_bh(&s->lock);
+	if (ret)
+		return ret;
+
+	return lockamp_stream_enable(lockamp, true);
+}
+
+/* Stops the FPGA and the DMA. Filled periods stay readable. */
+static void lockamp_stream_halt(struct lockamp *lockamp)
+{
+	struct lockamp_stream *s = &lockamp->stream;
+	struct lockamp_buf *buf;
+
+	lockamp_stream_enable(lockamp, false);
+	dmaengine_terminate_sync(s->chan);
+
+	spin_lock_bh(&s->lock);
+	while ((buf = lockamp_bufq_pop(&s->in_flight)))
+		if (buf != &s->discard)
+			lockamp_bufq_push(&s->free, buf);
+	spin_unlock_bh(&s->lock);
+}
+
+static void lockamp_stream_restart(struct work_struct *work)
+{
+	struct lockamp *lockamp = container_of(work, struct lockamp,
+					       stream.restart_work);
+	struct lockamp_stream *s = &lockamp->stream;
+
+	mutex_lock(&s->control_m);
+	if (s->running) {
+		lockamp_stream_halt(lockamp);
+		if (lockamp_stream_go(lockamp))
+			dev_err(lockamp->dev, "Failed to restart the sample stream\n");
+	}
+	mutex_unlock(&s->control_m);
+}
+
 static void lockamp_stream_period_done(void *param,
 				       const struct dmaengine_result *result)
 {
@@ -168,15 +227,15 @@ static void lockamp_stream_period_done(void *param,
 		lockamp_update_ma_time_ns(LOCKAMP_PERIOD_N);
 	}
 
-	if (overflow)
+	if (!s->running)
+		goto unlock;
+	if (overflow) {
 		lockamp_data_loss(lockamp, "The FPGA stream overflowed");
-
-	if (s->running) {
-		if (lockamp_stream_arm(lockamp))
-			dev_err_ratelimited(lockamp->dev,
-					    "Failed to arm a DMA period\n");
-		else
-			issue = true;
+		schedule_work(&s->restart_work);
+	} else if (lockamp_stream_arm(lockamp)) {
+		dev_err_ratelimited(lockamp->dev, "Failed to arm a DMA period\n");
+	} else {
+		issue = true;
 	}
 unlock:
 	spin_unlock(&s->lock);
@@ -188,7 +247,7 @@ unlock:
 int lockamp_stream_start(struct lockamp *lockamp)
 {
 	struct lockamp_stream *s = &lockamp->stream;
-	int ret = 0;
+	int ret;
 	int i;
 
 	lockamp_bufq_reset(&s->free);
@@ -200,32 +259,14 @@ int lockamp_stream_start(struct lockamp *lockamp)
 	last_ma_time_ns = ktime_get_ns();
 
 	ret = regmap_write(lockamp->regmap, LOCKAMP_REG_STREAM_PERIOD,
-			   LOCKAMP_PERIOD_SIZE / sizeof(u32));
-	if (ret)
-		return ret;
-	/* Disabled, and the overflow flag cleared */
-	ret = regmap_write(lockamp->regmap, LOCKAMP_REG_STREAM_CONTROL,
-			   LOCKAMP_STREAM_OVERFLOW);
-	if (ret)
-		return ret;
-
-	spin_lock_bh(&s->lock);
-	s->running = true;
-	for (i = 0; i < LOCKAMP_STREAM_IN_FLIGHT; ++i) {
-		ret = lockamp_stream_arm(lockamp);
-		if (ret)
-			break;
-		/* Starts the first batch, so the rest waits as the next one */
-		if (i == LOCKAMP_STREAM_BATCH - 1)
-			dma_async_issue_pending(s->chan);
-	}
-	if (ret)
-		s->running = false;
-	spin_unlock_bh(&s->lock);
+			   LOCKAMP_PERIOD_N);
 	if (ret)
 		goto err;
 
-	ret = lockamp_stream_enable(lockamp, true);
+	mutex_lock(&s->control_m);
+	s->running = true;
+	ret = lockamp_stream_go(lockamp);
+	mutex_unlock(&s->control_m);
 	if (ret)
 		goto err;
 	return 0;
@@ -240,13 +281,13 @@ void lockamp_stream_stop(struct lockamp *lockamp)
 {
 	struct lockamp_stream *s = &lockamp->stream;
 
+	mutex_lock(&s->control_m);
 	spin_lock_bh(&s->lock);
 	s->running = false;
 	spin_unlock_bh(&s->lock);
-	lockamp_stream_enable(lockamp, false);
-	dmaengine_terminate_sync(s->chan);
-	/* A callback that cleared the overflow flag may have set enable again */
-	lockamp_stream_enable(lockamp, false);
+	lockamp_stream_halt(lockamp);
+	mutex_unlock(&s->control_m);
+	cancel_work_sync(&s->restart_work);
 }
 
 /* Bytes the reader can read now. Always whole samples. */
@@ -345,6 +386,8 @@ int lockamp_stream_init(struct lockamp *lockamp, struct device *dev)
 	int i;
 
 	spin_lock_init(&s->lock);
+	mutex_init(&s->control_m);
+	INIT_WORK(&s->restart_work, lockamp_stream_restart);
 	s->chan = dma_request_chan(dev, "rx");
 	if (IS_ERR(s->chan))
 		return dev_err_probe(dev, PTR_ERR(s->chan),

@@ -11,6 +11,7 @@
 #include <linux/dmaengine.h>
 #include <linux/sizes.h>
 #include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -61,6 +62,10 @@ struct lockamp_stream {
 	struct lockamp_buf discard;
 	/* Guards the queues, tail_offset and running */
 	spinlock_t lock;
+	/* Serialises stopping with restart_work */
+	struct mutex control_m;
+	/* Restarts the stream after the FPGA overflowed */
+	struct work_struct restart_work;
 	struct lockamp_bufq free;
 	struct lockamp_bufq in_flight;
 	/* Periods with data, oldest first */
