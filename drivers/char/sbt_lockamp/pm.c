@@ -12,25 +12,10 @@
 static int lockamp_pm_suspend(struct device *dev)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
-	/* The "fifo_to_sbuf" kthread will wait for the mutex indefinitely.
-	 * This way, the hardware is not used during the suspend.
-	 */
-	mutex_lock(&lockamp->signal_buf_m);
-	dev_dbg(dev, "Success\n");
-	return 0;
-}
 
-static int lockamp_pm_resume(struct device *dev)
-{
-	struct lockamp *lockamp = dev_get_drvdata(dev);
-	/* Wait for a short while for the HW to power up. We determine the
-	 * 'short while' as follows:
-	 *   1) The kernel crashes when we use 1 ms
-	 *   2) Seemingly works (couldn't get it not to work) when we use 5 ms
-	 *   3) We choose 10 ms to be on the safe side
-	 */
-	msleep(10);
-	mutex_unlock(&lockamp->signal_buf_m);
+	/* The DMA would keep writing to RAM while the system sleeps */
+	if (lockamp->stream.running)
+		return -EBUSY;
 	dev_dbg(dev, "Success\n");
 	return 0;
 }
@@ -136,8 +121,7 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 }
 
 struct dev_pm_ops lockamp_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(lockamp_pm_suspend,
-	                        lockamp_pm_resume)
+	SET_SYSTEM_SLEEP_PM_OPS(lockamp_pm_suspend, NULL)
 	SET_RUNTIME_PM_OPS(lockamp_pm_runtime_suspend,
 	                   lockamp_pm_runtime_resume,
 	                   NULL)

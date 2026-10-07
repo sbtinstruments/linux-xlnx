@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 
 #include "hw.h"
+#include "stream.h"
 
 static struct class *lockamp_class;
 
@@ -98,7 +99,12 @@ static int lockamp_get_io_resources(struct lockamp *lockamp,
 }
 
 static bool lockamp_reg_gap(struct device *dev, unsigned int reg) {
-	if (LOCKAMP_REG_GEN2_LOCK_PHASE < reg && reg < LOCKAMP_REG_DEBUG0) {
+	/* The retired FIFO registers: a read popped data */
+	if (reg > LOCKAMP_REG_VERSION && reg < LOCKAMP_REG_GEN1_SCALE)
+		return true;
+	if (reg > LOCKAMP_REG_GEN2_LOCK_PHASE && reg < LOCKAMP_REG_STREAM_CONTROL)
+		return true;
+	if (reg > LOCKAMP_REG_SAMPLE_SIGN && reg < LOCKAMP_REG_DEBUG0) {
 		return true;
 	}
 	if (LOCKAMP_REG_DEBUG_CONTROL < reg && reg < LOCKAMP_REG_FIR_COEF_BASE) {
@@ -128,8 +134,7 @@ static bool lockamp_writeable_reg(struct device *dev, unsigned int reg)
 static bool lockamp_volatile_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case LOCKAMP_REG_FIFO_SIZE:
-	case LOCKAMP_REG_FIFO_DATA:
+	case LOCKAMP_REG_STREAM_CONTROL:
 	case LOCKAMP_REG_ADC_BUFFER:
 		return true;
 	}
@@ -176,39 +181,18 @@ static int lockamp_probe(struct platform_device *pdev)
 	/* Reset */
 	lockamp_reset(lockamp);
 
-	/* Init mutexes */
-	mutex_init(&lockamp->signal_buf_m);
 	mutex_init(&lockamp->adc_buf_m);
 
-	/* Signal buffer */
-#ifdef CONFIG_SBT_LOCKAMP_USE_SBUF
-	lockamp->signal_buf.buf = vmalloc(LOCKAMP_SIGNAL_BUF_CAPACITY);
-	lockamp->signal_buf.capacity_n = LOCKAMP_SIGNAL_BUF_CAPACITY / sizeof(struct sample);
-	lockamp->signal_buf.head = 0;
-	lockamp->signal_buf.tail = 0;
-	if (NULL == lockamp->signal_buf.buf) {
-		dev_err(lockamp->dev, "Failed to allocate signal buffer.\n");
-		return -ENOMEM;
-	}
-	/* Must be a power of 2 so that the CIRC_* macros work */
-	if (!is_power_of_2(lockamp->signal_buf.capacity_n)) {
-		dev_err(lockamp->dev, "Signal buffer capacity must be a power of 2 (tried with %d).\n",
-		        lockamp->signal_buf.capacity_n);
-		ret = -EINVAL;
-		goto out_sbuf;
-	}
-#else
-	lockamp->signal_buf.buf = NULL;
-	lockamp->signal_buf.capacity_n = 0;
-	lockamp->signal_buf.head = 0;
-	lockamp->signal_buf.tail = 0;
-#endif
+	/* Sample stream (DMA channel and signal buffer) */
+	ret = lockamp_stream_init(lockamp, &pdev->dev);
+	if (ret < 0)
+		return ret;
 
 	/* Dev (device number) */
 	ret = alloc_chrdev_region(&lockamp->chrdev_no, 0, 1, pdev->name);
 	if (ret < 0) {
 		dev_err(lockamp->dev, "Failed to allocate character device region.\n");
-		goto out_sbuf;
+		goto out_stream;
 	}
 
 	/* Cdev (character device) */
@@ -289,6 +273,24 @@ static int lockamp_probe(struct platform_device *pdev)
 	}
 	atomic_set(&lockamp->desyncs, 0);
 
+	/* The bitstream must have the sample stream: there is no other path */
+	ret = lockamp_version(lockamp, &version);
+	if (ret < 0) {
+		dev_err(lockamp->dev, "Failed to get hardware version: %d\n", ret);
+		goto out_pm_get;
+	}
+	if (version < LOCKAMP_VERSION_STREAM) {
+		dev_err(lockamp->dev, "Hardware version %x has no sample stream (needs %x)\n",
+			version, LOCKAMP_VERSION_STREAM);
+		ret = -ENODEV;
+		goto out_pm_get;
+	}
+	ret = regmap_write(lockamp->regmap, LOCKAMP_REG_SAMPLE_SIGN, 0);
+	if (ret < 0) {
+		dev_err(lockamp->dev, "Failed to set the sample signs: %d\n", ret);
+		goto out_pm_get;
+	}
+
 	/* Set hardware defaults */
 	ret = lockamp_set_fir_coefs(lockamp, lockamp_fir_coefs[0]);
 	if (ret < 0) {
@@ -297,11 +299,6 @@ static int lockamp_probe(struct platform_device *pdev)
 	}
 
 	/* Welcome message */
-	ret = lockamp_version(lockamp, &version);
-	if (ret < 0) {
-		dev_err(lockamp->dev, "Failed to get hardware version: %d\n", ret);
-		goto out_pm_get;
-	}
 	dev_info(lockamp->dev, "Probe success (hw_version:%x)\n", version);
 
 	pm_runtime_put(&pdev->dev); /* ignore return value */
@@ -318,8 +315,8 @@ out_cdev:
 	cdev_del(&lockamp->cdev);
 out_chrdev:
 	unregister_chrdev_region(lockamp->chrdev_no, 1);
-out_sbuf:
-	vfree(lockamp->signal_buf.buf);
+out_stream:
+	lockamp_stream_exit(lockamp);
 	return ret;
 }
 
@@ -330,7 +327,7 @@ static int lockamp_remove(struct platform_device *pdev)
 	device_destroy(lockamp_class, lockamp->chrdev_no);
 	cdev_del(&lockamp->cdev);
 	unregister_chrdev_region(lockamp->chrdev_no, 1);
-	vfree(lockamp->signal_buf.buf);
+	lockamp_stream_exit(lockamp);
 	return 0;
 }
 
