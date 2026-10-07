@@ -8,6 +8,7 @@
 #define LOCKAMP_LOCKAMP_H
 #include <asm/atomic.h>
 #include <linux/cdev.h>
+#include <linux/completion.h>
 #include <linux/dmaengine.h>
 #include <linux/sizes.h>
 #include <linux/spinlock.h>
@@ -41,6 +42,8 @@
  */
 #define LOCKAMP_STREAM_BATCH         2
 #define LOCKAMP_STREAM_IN_FLIGHT     (2 * LOCKAMP_STREAM_BATCH)
+/* Stopping waits for the periods in flight: 4 x 45 ms at the slowest rate */
+#define LOCKAMP_DRAIN_MS             500
 
 struct lockamp_buf {
 	void *vaddr;
@@ -73,6 +76,10 @@ struct lockamp_stream {
 	/* Bytes already read from the oldest filled period */
 	size_t tail_offset;
 	bool running;
+	/* The FPGA streams (enabled by lockamp_stream_go) */
+	bool streaming;
+	/* Completes once "running" is false and no period is in flight */
+	struct completion drained;
 };
 
 struct lockamp {

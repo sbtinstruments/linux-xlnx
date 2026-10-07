@@ -153,6 +153,7 @@ static int lockamp_stream_go(struct lockamp *lockamp)
 
 	/* The overflow flag is sticky: clear it from the last run */
 	lockamp_stream_overflowed(lockamp);
+	reinit_completion(&s->drained);
 
 	spin_lock_bh(&s->lock);
 	for (i = 0; i < LOCKAMP_STREAM_IN_FLIGHT; ++i) {
@@ -167,25 +168,45 @@ static int lockamp_stream_go(struct lockamp *lockamp)
 	if (ret)
 		return ret;
 
-	return lockamp_stream_enable(lockamp, true);
+	ret = lockamp_stream_enable(lockamp, true);
+	s->streaming = !ret;
+	return ret;
+}
+
+/* Arms no more periods. Call with the lock held. */
+static void lockamp_stream_stop_arming(struct lockamp_stream *s)
+{
+	s->running = false;
+	if (!lockamp_bufq_count(&s->in_flight))
+		complete(&s->drained);
 }
 
 /*
- * Stops the DMA, then the FPGA. Filled periods stay readable. Call with
- * "running" false, so no callback re-arms a period meanwhile.
+ * Stops the DMA and the FPGA. Filled periods stay readable. Call after
+ * lockamp_stream_stop_arming().
  *
- * The S2MM channel halts only once its current transfer has its data. So
- * the FPGA must still stream while the DMA halts: with the stream disabled
- * first, the halt waits out xilinx_dma's 1 s timeout ("Cannot stop
- * channel") and the channel gets reset anyway.
+ * The DMA must be idle, with the FPGA stopped, before it is terminated:
+ * - The S2MM channel halts only once its current transfer has its data.
+ *   With the FPGA stopped mid-period, the halt waits out xilinx_dma's 1 s
+ *   timeout ("Cannot stop channel").
+ * - With the FPGA streaming, the halt completes the current period, and
+ *   xilinx_dma's IRQ handler starts the pending ones while the terminate
+ *   runs. The next open then reads nothing.
+ * So the periods in flight complete first: then the channel idles at its
+ * tail with none pending, and halts at once.
  */
 static void lockamp_stream_halt(struct lockamp *lockamp)
 {
 	struct lockamp_stream *s = &lockamp->stream;
 	struct lockamp_buf *buf;
 
-	dmaengine_terminate_sync(s->chan);
+	if (s->streaming &&
+	    !wait_for_completion_timeout(&s->drained,
+					 msecs_to_jiffies(LOCKAMP_DRAIN_MS)))
+		dev_warn(lockamp->dev, "The DMA did not finish its periods\n");
 	lockamp_stream_enable(lockamp, false);
+	s->streaming = false;
+	dmaengine_terminate_sync(s->chan);
 
 	spin_lock_bh(&s->lock);
 	while ((buf = lockamp_bufq_pop(&s->in_flight)))
@@ -203,7 +224,7 @@ static void lockamp_stream_restart(struct work_struct *work)
 	mutex_lock(&s->control_m);
 	if (s->running) {
 		spin_lock_bh(&s->lock);
-		s->running = false;
+		lockamp_stream_stop_arming(s);
 		spin_unlock_bh(&s->lock);
 		lockamp_stream_halt(lockamp);
 		spin_lock_bh(&s->lock);
@@ -241,8 +262,11 @@ static void lockamp_stream_period_done(void *param,
 		lockamp_update_ma_time_ns(LOCKAMP_PERIOD_N);
 	}
 
-	if (!s->running)
+	if (!s->running) {
+		if (!lockamp_bufq_count(&s->in_flight))
+			complete(&s->drained);
 		goto unlock;
+	}
 	if (overflow) {
 		lockamp_data_loss(lockamp, "The FPGA stream overflowed");
 		schedule_work(&s->restart_work);
@@ -297,7 +321,7 @@ void lockamp_stream_stop(struct lockamp *lockamp)
 
 	mutex_lock(&s->control_m);
 	spin_lock_bh(&s->lock);
-	s->running = false;
+	lockamp_stream_stop_arming(s);
 	spin_unlock_bh(&s->lock);
 	lockamp_stream_halt(lockamp);
 	mutex_unlock(&s->control_m);
@@ -401,6 +425,7 @@ int lockamp_stream_init(struct lockamp *lockamp, struct device *dev)
 
 	spin_lock_init(&s->lock);
 	mutex_init(&s->control_m);
+	init_completion(&s->drained);
 	INIT_WORK(&s->restart_work, lockamp_stream_restart);
 	s->chan = dma_request_chan(dev, "rx");
 	if (IS_ERR(s->chan))
