@@ -5,6 +5,8 @@
 
 #include "lockin_amplifier.h"
 
+int lockamp_amp_supply_set(struct lockamp *lockamp, bool on);
+
 static inline int lockamp_pm_get(struct lockamp *lockamp)
 {
 	return pm_runtime_get_sync(lockamp->dev->parent);

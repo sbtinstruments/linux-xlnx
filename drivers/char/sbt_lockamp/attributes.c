@@ -834,27 +834,16 @@ static ssize_t amp_supply_force_off_store(
 	if (ret < 0) {
 		return ret;
 	}
-	/* Regulator is currently enabled... */
-	if (regulator_is_enabled(lockamp->amp_supply)) {
-		/* ...and we want to force it off... */
-		if (lockamp->amp_supply_force_off) {
-			/* ...so we disable the regulator right away. */
-			ret = regulator_disable(lockamp->amp_supply);
-			if (ret < 0) {
-				dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
-				return ret;
-			}
-		}
-	}
-	/* Regulator is currently disabled even though the system is active
-	 * and we no longer want to force it off... */
-	else if (pm_runtime_active(dev) && !lockamp->amp_supply_force_off) {
-		/* ...so we enable the regulator right way. */
-		ret = regulator_enable(lockamp->amp_supply);
-		if (ret < 0) {
-			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
-			return ret;
-		}
+	/* A request, not the rail: the rail stays on while another consumer
+	 * holds it on.
+	 */
+	if (lockamp->amp_supply_force_off)
+		ret = lockamp_amp_supply_set(lockamp, false);
+	else if (pm_runtime_active(dev))
+		ret = lockamp_amp_supply_set(lockamp, true);
+	if (ret < 0) {
+		dev_err(dev, "Failed to switch the regulator for the amplifiers: %d\n", ret);
+		return ret;
 	}
 	return count;
 }

@@ -90,7 +90,14 @@ struct lockamp {
 	struct iio_channel *adc_site0, *adc_site1, *dac_site0, *dac_site1;
 	struct regmap *regmap;
 	u8 __iomem *control;
+	/* Shared with other consumers (the BactoBox beeper). The rail is on
+	 * while any of them holds it on.
+	 */
 	struct regulator *amp_supply;
+	/* Guards amp_supply_on */
+	struct mutex amp_supply_m;
+	/* This driver holds the rail on */
+	bool amp_supply_on;
 	bool amp_supply_force_off;
 
 	struct lockamp_stream stream;

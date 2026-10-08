@@ -8,6 +8,7 @@
 #include <linux/iio/consumer.h>
 
 #include "hw.h"
+#include "pm.h"
 
 static int lockamp_pm_suspend(struct device *dev)
 {
@@ -18,6 +19,26 @@ static int lockamp_pm_suspend(struct device *dev)
 		return -EBUSY;
 	dev_dbg(dev, "Success\n");
 	return 0;
+}
+
+/* Hold the amp supply on, or let it go. Another consumer may still hold
+ * it on, so regulator_is_enabled() says nothing about this driver.
+ */
+int lockamp_amp_supply_set(struct lockamp *lockamp, bool on)
+{
+	int ret = 0;
+
+	mutex_lock(&lockamp->amp_supply_m);
+	if (on != lockamp->amp_supply_on) {
+		if (on)
+			ret = regulator_enable(lockamp->amp_supply);
+		else
+			ret = regulator_disable(lockamp->amp_supply);
+		if (ret == 0)
+			lockamp->amp_supply_on = on;
+	}
+	mutex_unlock(&lockamp->amp_supply_m);
+	return ret;
 }
 
 static int lockamp_powerdown_iio_chan(struct iio_channel *chan, bool powerdown)
@@ -58,17 +79,10 @@ static int lockamp_pm_runtime_suspend(struct device *dev)
 		dev_err(dev, "Failed to disable the AD/DA converters: %d\n", ret);
 		return ret;
 	}
-	/* We have exclusive ownership of the regulator, so the regulator is
-	 * enabled iff we enabled it in this driver.
-	 *
-	 * The regulator is eanbled and we are not forcing it off... */
-	if (regulator_is_enabled(lockamp->amp_supply) && !lockamp->amp_supply_force_off) {
-		/* ...so we disable the regulator right away. */
-		ret = regulator_disable(lockamp->amp_supply);
-		if (ret < 0) {
-			dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
-			return ret;
-		}
+	ret = lockamp_amp_supply_set(lockamp, false);
+	if (ret < 0) {
+		dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
+		return ret;
 	}
 	dev_dbg(dev, "Success\n");
 	return 0;
@@ -104,13 +118,8 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 			return ret;
 		}
 	}
-	/* We have exclusive ownership of the regulator, so the regulator is
-	 * enabled iff we enabled it in this driver.
-	 *
-	 * The regulator is disabled and we are not forcing it off... */
-	if (!regulator_is_enabled(lockamp->amp_supply) && !lockamp->amp_supply_force_off) {
-		/* ...so we enable the regulator right away. */
-		ret = regulator_enable(lockamp->amp_supply);
+	if (!lockamp->amp_supply_force_off) {
+		ret = lockamp_amp_supply_set(lockamp, true);
 		if (ret < 0) {
 			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
 			return ret;

@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 
 #include "hw.h"
+#include "pm.h"
 #include "stream.h"
 
 static struct class *lockamp_class;
@@ -221,11 +222,11 @@ static int lockamp_probe(struct platform_device *pdev)
 		goto out_device;
 	}
 
-	/* Vs regulator for the injection amp
-	 *
-	 * We need exclusive ownership of the regulator so that we can enforce
-	 * the "amp_supply_force_off" logic. */
-	lockamp->amp_supply = devm_regulator_get_exclusive(&pdev->dev, "amp");
+	/* Vs regulator for the injection amp. Shared: on the BactoBox, the
+	 * same switch powers the PCB buzzer.
+	 */
+	mutex_init(&lockamp->amp_supply_m);
+	lockamp->amp_supply = devm_regulator_get(&pdev->dev, "amp");
 	if (IS_ERR(lockamp->amp_supply)) {
 		dev_err(lockamp->dev, "Failed to get 'amp' regulator.\n");
 		ret = PTR_ERR(lockamp->amp_supply);
@@ -323,6 +324,7 @@ static int lockamp_remove(struct platform_device *pdev)
 {
 	struct lockamp *lockamp = platform_get_drvdata(pdev);
 	pm_runtime_disable(&pdev->dev);
+	lockamp_amp_supply_set(lockamp, false); /* ignore return value */
 	device_destroy(lockamp_class, lockamp->chrdev_no);
 	cdev_del(&lockamp->cdev);
 	unregister_chrdev_region(lockamp->chrdev_no, 1);
