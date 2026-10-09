@@ -41,6 +41,7 @@
 #include <asm/types.h>
 #include <linux/compiler.h>
 #include <asm/asm-compat.h>
+#include <asm/barrier.h>
 #include <linux/stringify.h>
 
 /*
@@ -175,7 +176,6 @@ static inline void __clear_bit_unlock(int nr, volatile unsigned long *addr)
 #include <asm-generic/bitops/fls.h>
 #include <asm-generic/bitops/ffs.h>
 #include <asm-generic/bitops/hweight.h>
-#include <asm-generic/bitops/find.h>
 #include <asm-generic/bitops/fls64.h>
 
 /* Little-endian versions */

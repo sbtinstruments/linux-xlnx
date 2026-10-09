@@ -166,7 +166,7 @@ static int da9063_reg_init(struct da9063_gpio *gpio)
 {
 	int ret = -ENODEV;
 
-	gpio->reg = regulator_get(NULL, "gpio-ext-reg");
+	gpio->reg = regulator_get_optional(gpio->gp.parent, "gpio-ext-reg");
 	if (!IS_ERR(gpio->reg))
 		/* The regulator use count needs to be incremented.
 		 * otherwise we get an unbalanced call if we call
@@ -190,6 +190,7 @@ static int da9063_gpio_probe(struct platform_device *pdev)
 		return -EPROBE_DEFER;
 
 	gpio->gp = reference_gp;
+	gpio->gp.parent = &pdev->dev;
 
 	gpio->gp.of_node = pdev->dev.of_node;
 	ret = gpiochip_add(&gpio->gp);

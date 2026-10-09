@@ -62,6 +62,12 @@ static const struct xvip_video_format xvip_video_formats[] = {
 	  2, 16, V4L2_PIX_FMT_X216M, 2, 2, 1, 1 },
 	{ XVIP_VF_YUV_444, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
 	  3, 24, V4L2_PIX_FMT_VUY24, 1, 1, 1, 1 },
+	{ XVIP_VF_YUV_444, 10, NULL, MEDIA_BUS_FMT_VUY10_1X30,
+	  1, 24, V4L2_PIX_FMT_X403, 3, 1, 1, 1 },
+	{ XVIP_VF_YUV_444, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
+	  1, 24, V4L2_PIX_FMT_YUV444P, 3, 1, 1, 1 },
+	{ XVIP_VF_YUV_444, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
+	  1, 8, V4L2_PIX_FMT_YUV444M, 3, 3, 1, 1 },
 	{ XVIP_VF_YUVX, 8, NULL, MEDIA_BUS_FMT_VUY8_1X24,
 	  4, 32, V4L2_PIX_FMT_XVUY32, 1, 1, 1, 1 },
 	{ XVIP_VF_YUVX, 10, NULL, MEDIA_BUS_FMT_VUY10_1X30,
@@ -104,22 +110,32 @@ static const struct xvip_video_format xvip_video_formats[] = {
 	  1, 8, V4L2_PIX_FMT_SGBRG8, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 8, "bggr", MEDIA_BUS_FMT_SBGGR8_1X8,
 	  1, 8, V4L2_PIX_FMT_SBGGR8, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 12, "mono", MEDIA_BUS_FMT_Y12_1X12,
+	  2, 12, V4L2_PIX_FMT_Y12, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "rggb", MEDIA_BUS_FMT_SRGGB10_1X10,
+	  2, 10, V4L2_PIX_FMT_SRGGB10, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "grbg", MEDIA_BUS_FMT_SGRBG10_1X10,
+	  2, 10, V4L2_PIX_FMT_SGRBG10, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "gbrg", MEDIA_BUS_FMT_SGBRG10_1X10,
+	  2, 10, V4L2_PIX_FMT_SGBRG10, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 10, "bggr", MEDIA_BUS_FMT_SBGGR10_1X10,
+	  2, 10, V4L2_PIX_FMT_SBGGR10, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "rggb", MEDIA_BUS_FMT_SRGGB12_1X12,
-	  1, 12, V4L2_PIX_FMT_SRGGB12, 1, 1, 1, 1 },
+	  2, 12, V4L2_PIX_FMT_SRGGB12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "grbg", MEDIA_BUS_FMT_SGRBG12_1X12,
-	  1, 12, V4L2_PIX_FMT_SGRBG12, 1, 1, 1, 1 },
+	  2, 12, V4L2_PIX_FMT_SGRBG12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "gbrg", MEDIA_BUS_FMT_SGBRG12_1X12,
-	  1, 12, V4L2_PIX_FMT_SGBRG12, 1, 1, 1, 1 },
+	  2, 12, V4L2_PIX_FMT_SGBRG12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 12, "bggr", MEDIA_BUS_FMT_SBGGR12_1X12,
-	  1, 12, V4L2_PIX_FMT_SBGGR12, 1, 1, 1, 1 },
+	  2, 12, V4L2_PIX_FMT_SBGGR12, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 16, "rggb", MEDIA_BUS_FMT_SRGGB16_1X16,
-	  1, 16, V4L2_PIX_FMT_SRGGB16, 1, 1, 1, 1 },
+	  2, 16, V4L2_PIX_FMT_SRGGB16, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 16, "grbg", MEDIA_BUS_FMT_SGRBG16_1X16,
-	  1, 12, V4L2_PIX_FMT_SGRBG16, 1, 1, 1, 1 },
+	  2, 16, V4L2_PIX_FMT_SGRBG16, 1, 1, 1, 1 },
 	{ XVIP_VF_MONO_SENSOR, 16, "gbrg", MEDIA_BUS_FMT_SGBRG16_1X16,
-	  1, 12, V4L2_PIX_FMT_SGBRG16, 1, 1, 1, 1 },
-	{ XVIP_VF_MONO_SENSOR, 16, "bggr", MEDIA_BUS_FMT_SBGGR12_1X12,
-	  1, 12, V4L2_PIX_FMT_SBGGR16, 1, 1, 1, 1 },
+	  2, 16, V4L2_PIX_FMT_SGBRG16, 1, 1, 1, 1 },
+	{ XVIP_VF_MONO_SENSOR, 16, "bggr", MEDIA_BUS_FMT_SBGGR16_1X16,
+	  2, 16, V4L2_PIX_FMT_SBGGR16, 1, 1, 1, 1 },
 };
 
 /**
@@ -150,8 +166,8 @@ EXPORT_SYMBOL_GPL(xvip_get_format_by_code);
  * @fourcc: the format 4CC
  *
  * Return: a pointer to the format information structure corresponding to the
- * given V4L2 format @fourcc, or ERR_PTR if no corresponding format can be
- * found.
+ * given V4L2 format @fourcc. If not found, return a pointer to the first
+ * available format (V4L2_PIX_FMT_YUYV).
  */
 const struct xvip_video_format *xvip_get_format_by_fourcc(u32 fourcc)
 {
@@ -164,7 +180,7 @@ const struct xvip_video_format *xvip_get_format_by_fourcc(u32 fourcc)
 			return format;
 	}
 
-	return ERR_PTR(-EINVAL);
+	return &xvip_video_formats[0];
 }
 EXPORT_SYMBOL_GPL(xvip_get_format_by_fourcc);
 
@@ -182,6 +198,7 @@ void xvip_bpl_scaling_factor(u32 fourcc, u32 *numerator, u32 *denominator)
 	case V4L2_PIX_FMT_XY10:
 	case V4L2_PIX_FMT_XV15:
 	case V4L2_PIX_FMT_XV20:
+	case V4L2_PIX_FMT_X403:
 	case V4L2_PIX_FMT_XV15M:
 	case V4L2_PIX_FMT_XV20M:
 	case V4L2_PIX_FMT_XBGR30:
@@ -222,6 +239,7 @@ void xvip_width_padding_factor(u32 fourcc, u32 *numerator, u32 *denominator)
 	case V4L2_PIX_FMT_XY10:
 	case V4L2_PIX_FMT_XV15:
 	case V4L2_PIX_FMT_XV20:
+	case V4L2_PIX_FMT_X403:
 	case V4L2_PIX_FMT_XV15M:
 	case V4L2_PIX_FMT_XV20M:
 	case V4L2_PIX_FMT_XBGR30:
@@ -316,7 +334,7 @@ void xvip_set_format_size(struct v4l2_mbus_framefmt *format,
 	format->width = clamp_t(unsigned int, fmt->format.width,
 				XVIP_MIN_WIDTH, XVIP_MAX_WIDTH);
 	format->height = clamp_t(unsigned int, fmt->format.height,
-			 XVIP_MIN_HEIGHT, XVIP_MAX_HEIGHT);
+				 XVIP_MIN_HEIGHT, XVIP_MAX_HEIGHT);
 }
 EXPORT_SYMBOL_GPL(xvip_set_format_size);
 
@@ -371,10 +389,8 @@ EXPORT_SYMBOL_GPL(xvip_clr_and_set);
 int xvip_init_resources(struct xvip_device *xvip)
 {
 	struct platform_device *pdev = to_platform_device(xvip->dev);
-	struct resource *res;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	xvip->iomem = devm_ioremap_resource(xvip->dev, res);
+	xvip->iomem = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(xvip->iomem))
 		return PTR_ERR(xvip->iomem);
 
@@ -399,7 +415,7 @@ EXPORT_SYMBOL_GPL(xvip_cleanup_resources);
 /**
  * xvip_enum_mbus_code - Enumerate the media format code
  * @subdev: V4L2 subdevice
- * @cfg: V4L2 subdev pad configuration
+ * @sd_state: V4L2 subdev state
  * @code: returning media bus code
  *
  * Enumerate the media bus code of the subdevice. Return the corresponding
@@ -411,7 +427,7 @@ EXPORT_SYMBOL_GPL(xvip_cleanup_resources);
  * is not valid.
  */
 int xvip_enum_mbus_code(struct v4l2_subdev *subdev,
-			struct v4l2_subdev_pad_config *cfg,
+			struct v4l2_subdev_state *sd_state,
 			struct v4l2_subdev_mbus_code_enum *code)
 {
 	struct v4l2_mbus_framefmt *format;
@@ -425,7 +441,7 @@ int xvip_enum_mbus_code(struct v4l2_subdev *subdev,
 	if (code->index)
 		return -EINVAL;
 
-	format = v4l2_subdev_get_try_format(subdev, cfg, code->pad);
+	format = v4l2_subdev_get_try_format(subdev, sd_state, code->pad);
 
 	code->code = format->code;
 
@@ -436,7 +452,7 @@ EXPORT_SYMBOL_GPL(xvip_enum_mbus_code);
 /**
  * xvip_enum_frame_size - Enumerate the media bus frame size
  * @subdev: V4L2 subdevice
- * @cfg: V4L2 subdev pad configuration
+ * @sd_state: V4L2 subdev state
  * @fse: returning media bus frame size
  *
  * This function is a drop-in implementation of the subdev enum_frame_size pad
@@ -449,7 +465,7 @@ EXPORT_SYMBOL_GPL(xvip_enum_mbus_code);
  * if the index or the code is not valid.
  */
 int xvip_enum_frame_size(struct v4l2_subdev *subdev,
-			 struct v4l2_subdev_pad_config *cfg,
+			 struct v4l2_subdev_state *sd_state,
 			 struct v4l2_subdev_frame_size_enum *fse)
 {
 	struct v4l2_mbus_framefmt *format;
@@ -460,7 +476,7 @@ int xvip_enum_frame_size(struct v4l2_subdev *subdev,
 	if (fse->which == V4L2_SUBDEV_FORMAT_ACTIVE)
 		return -EINVAL;
 
-	format = v4l2_subdev_get_try_format(subdev, cfg, fse->pad);
+	format = v4l2_subdev_get_try_format(subdev, sd_state, fse->pad);
 
 	if (fse->index || fse->code != format->code)
 		return -EINVAL;

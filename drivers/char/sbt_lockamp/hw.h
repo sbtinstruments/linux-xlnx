@@ -13,12 +13,19 @@
 #include "lockin_amplifier.h"
 
 #define LOCKAMP_REG_VERSION         0x000
-#define LOCKAMP_REG_FIFO_SIZE       0x004
-#define LOCKAMP_REG_FIFO_DATA       0x008
+/* 0x004 and 0x008 were the FIFO fill level and the FIFO pop (retired) */
 #define LOCKAMP_REG_GEN1_SCALE      0x00C
 #define LOCKAMP_REG_GEN2_SCALE      0x038 /* Note the jump in address */
 #define LOCKAMP_REG_ADC_BUFFER      0x010
-/* Registers 0x014 to 0x027 (both inclusive) are deprecated */
+/* The sample stream (sbt/drupe#40) */
+#define LOCKAMP_REG_STREAM_CONTROL  0x01C
+#define LOCKAMP_STREAM_ENABLE       BIT(0)
+#define LOCKAMP_REG_STREAM_PERIOD   0x020 /* Samples per packet (tlast) */
+#define LOCKAMP_REG_SAMPLE_SIGN     0x024 /* Bit n set: negate site n */
+#define LOCKAMP_REG_STREAM_STATUS   0x03C
+#define LOCKAMP_STREAM_OVERFLOW     BIT(0) /* Sticky; write 1 to clear */
+#define LOCKAMP_VERSION_STREAM      0xABBA0023
+/* Registers 0x014 to 0x018 (both inclusive) are deprecated */
 #define LOCKAMP_REG_DAC_DATA_BITS   0x028
 #define LOCKAMP_REG_HB_FILTERS      0x02C
 #define LOCKAMP_REG_FIR_CYCLES      0x030
@@ -63,23 +70,6 @@ void lockamp_reset(struct lockamp *lockamp);
 static inline int lockamp_version(struct lockamp *lockamp, u32 *value)
 {
 	return regmap_read(lockamp->regmap, LOCKAMP_REG_VERSION, value);
-}
-
-/* Raw read (not through regmap) */
-static inline u32 lockamp_fifo_size_s32(struct lockamp *lockamp)
-{
-	return ioread32(lockamp->control + LOCKAMP_REG_FIFO_SIZE);
-}
-
-static inline u32 lockamp_fifo_size_n(struct lockamp *lockamp)
-{
-	/*
-	 * Note that the FIFO contains s32 elements. Therefore, it is possible that
-	 * there are not enough elements to construct a complete sample.
-	 * E.g., 3 entries of 's32's. Fortunately, when we divide by
-	 * entries_per_sample, we automatically truncate 'incomplete' samples away.
-	 */
-	return lockamp_fifo_size_s32(lockamp) / LOCKAMP_ENTRIES_PER_SAMPLE;
 }
 
 static inline int lockamp_adjust_gen_scale(s32* scale)
@@ -296,18 +286,6 @@ static inline int lockamp_get_duration_ns(struct lockamp *lockamp, size_t size_n
 	return 0;
 }
 
-/* The time it takes to read half of the FIFO. */
-static inline int lockamp_get_read_delay_ns(struct lockamp *lockamp, unsigned long *value)
-{
-	unsigned int time_step_ns;
-	int ret = lockamp_get_time_step_ns(lockamp, &time_step_ns);
-	if (ret < 0) {
-		return ret;
-	}
-	*value = LOCKAMP_FIFO_CAPACITY_N / 2 * time_step_ns;
-	return 0;
-}
-
 static inline int lockamp_reset_ma_filter(struct lockamp *lockamp)
 {
 	int ret;
@@ -325,58 +303,6 @@ static inline int lockamp_reset_ma_filter(struct lockamp *lockamp)
 	return ret;
 }
 
-/* Raw read (not through regmap) */
-static inline s32 lockamp_fifo_pop(struct lockamp *lockamp)
-{
-#ifdef CONFIG_SBT_LOCKAMP_FIFO_POP_RELAXED
-	return readl_relaxed(lockamp->control + LOCKAMP_REG_FIFO_DATA);
-#else
-	return ioread32(lockamp->control + LOCKAMP_REG_FIFO_DATA);
-#endif
-}
-
-/* Raw read (not through regmap) */
-static __maybe_unused inline s32 lockamp_fifo_pop_dbg(struct lockamp *lockamp)
-{
-	u32 raw;
-	s32 ret; /* signed, so that right-shifts will be arithmetic */
-#ifdef CONFIG_SBT_LOCKAMP_FIFO_POP_RELAXED
-	raw = readl_relaxed(lockamp->control + LOCKAMP_REG_FIFO_DATA);
-#else
-	raw = ioread32(lockamp->control + LOCKAMP_REG_FIFO_DATA);
-#endif
-	/* Bits 29:31 (the 3 MSBs) are for debug. Null these bits by bitwise
-	 * left-shift. Also, convert from u32 to s32. We assume that the compiler
-	 * does a reinterpretative cast. I.e., all bits are unchanged and only
-	 * the interpretation of the bits is changed (from unsigned to signed).
-	 */
-	ret = raw << 3;
-	/* After nulling the debug bits, we need to right-shift bits 0:28 back
-	 * into place. Furthermore, said bits must be sign-extended during the
-	 * shift. We use a bitwise right-shift to do the sign extension. Note
-	 * that right-shifts may or may not sign-extend. This depends on the
-	 * compiler (but it is usually the case). It works for GCC 7.2 targeting
-	 * arm-linux-gnueabihf.
-	 * Reference: https://stackoverflow.com/a/7636/554283
-	 */
-	ret >>= 3;
-	return ret;
-}
-
-static inline void lockamp_fifo_pop_sample(struct lockamp *lockamp, struct sample *s)
-{
-	int i;
-	int multiplier;
-	for (i = 0; LOCKAMP_SITES_PER_SAMPLE > i; ++i) {
-		multiplier = lockamp->sample_multipliers[i];
-		s->sites[i].hf_re = lockamp_fifo_pop(lockamp) * multiplier;
-		s->sites[i].hf_im = lockamp_fifo_pop(lockamp) * multiplier;
-		s->sites[i].lf_re = lockamp_fifo_pop(lockamp) * multiplier;
-		s->sites[i].lf_im = lockamp_fifo_pop(lockamp) * multiplier;
-	}
-}
-
-extern size_t lockamp_fifo_move_to_sbuf(struct lockamp *lockamp);
 extern int lockamp_set_fir_coefs(struct lockamp *lockamp, const s32 *coefs);
 extern void lockamp_get_adc_samples(struct lockamp *lockamp, s32 *adc_samples);
 

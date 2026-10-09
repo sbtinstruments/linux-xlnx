@@ -135,13 +135,13 @@ sifive_spi_prepare_message(struct spi_master *master, struct spi_message *msg)
 
 	/* Update the chip select polarity */
 	if (device->mode & SPI_CS_HIGH)
-		spi->cs_inactive &= ~BIT(device->chip_select);
+		spi->cs_inactive &= ~BIT(spi_get_chipselect(device, 0));
 	else
-		spi->cs_inactive |= BIT(device->chip_select);
+		spi->cs_inactive |= BIT(spi_get_chipselect(device, 0));
 	sifive_spi_write(spi, SIFIVE_SPI_REG_CSDEF, spi->cs_inactive);
 
 	/* Select the correct device */
-	sifive_spi_write(spi, SIFIVE_SPI_REG_CSID, device->chip_select);
+	sifive_spi_write(spi, SIFIVE_SPI_REG_CSID, spi_get_chipselect(device, 0));
 
 	/* Set clock mode */
 	sifive_spi_write(spi, SIFIVE_SPI_REG_SCKMODE,
@@ -357,14 +357,14 @@ static int sifive_spi_probe(struct platform_device *pdev)
 	if (!cs_bits) {
 		dev_err(&pdev->dev, "Could not auto probe CS lines\n");
 		ret = -EINVAL;
-		goto put_master;
+		goto disable_clk;
 	}
 
 	num_cs = ilog2(cs_bits) + 1;
 	if (num_cs > SIFIVE_SPI_MAX_CS) {
 		dev_err(&pdev->dev, "Invalid number of spi slaves\n");
 		ret = -EINVAL;
-		goto put_master;
+		goto disable_clk;
 	}
 
 	/* Define our master */
@@ -393,7 +393,7 @@ static int sifive_spi_probe(struct platform_device *pdev)
 			       dev_name(&pdev->dev), spi);
 	if (ret) {
 		dev_err(&pdev->dev, "Unable to bind to interrupt\n");
-		goto put_master;
+		goto disable_clk;
 	}
 
 	dev_info(&pdev->dev, "mapped; irq=%d, cs=%d\n",
@@ -402,11 +402,13 @@ static int sifive_spi_probe(struct platform_device *pdev)
 	ret = devm_spi_register_master(&pdev->dev, master);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "spi_register_master failed\n");
-		goto put_master;
+		goto disable_clk;
 	}
 
 	return 0;
 
+disable_clk:
+	clk_disable_unprepare(spi->clk);
 put_master:
 	spi_master_put(master);
 
@@ -420,9 +422,48 @@ static int sifive_spi_remove(struct platform_device *pdev)
 
 	/* Disable all the interrupts just in case */
 	sifive_spi_write(spi, SIFIVE_SPI_REG_IE, 0);
+	clk_disable_unprepare(spi->clk);
 
 	return 0;
 }
+
+static int sifive_spi_suspend(struct device *dev)
+{
+	struct spi_master *master = dev_get_drvdata(dev);
+	struct sifive_spi *spi = spi_master_get_devdata(master);
+	int ret;
+
+	ret = spi_master_suspend(master);
+	if (ret)
+		return ret;
+
+	/* Disable all the interrupts just in case */
+	sifive_spi_write(spi, SIFIVE_SPI_REG_IE, 0);
+
+	clk_disable_unprepare(spi->clk);
+
+	return ret;
+}
+
+static int sifive_spi_resume(struct device *dev)
+{
+	struct spi_master *master = dev_get_drvdata(dev);
+	struct sifive_spi *spi = spi_master_get_devdata(master);
+	int ret;
+
+	ret = clk_prepare_enable(spi->clk);
+	if (ret)
+		return ret;
+	ret = spi_master_resume(master);
+	if (ret)
+		clk_disable_unprepare(spi->clk);
+
+	return ret;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(sifive_spi_pm_ops,
+				sifive_spi_suspend, sifive_spi_resume);
+
 
 static const struct of_device_id sifive_spi_of_match[] = {
 	{ .compatible = "sifive,spi0", },
@@ -435,6 +476,7 @@ static struct platform_driver sifive_spi_driver = {
 	.remove = sifive_spi_remove,
 	.driver = {
 		.name = SIFIVE_SPI_DRIVER_NAME,
+		.pm = &sifive_spi_pm_ops,
 		.of_match_table = sifive_spi_of_match,
 	},
 };

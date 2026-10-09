@@ -6,39 +6,15 @@ menu "SBT Instruments lock-in amplifier"
 
 config SBT_LOCKAMP
 	tristate "SBT Instruments lock-in amplifier support"
+	depends on DMA_ENGINE
 	help
 	  Enable support for the SBT Instruments lock-in amplifier.
+	  Its samples reach RAM through a DMA engine (the "rx" channel).
 
 	  This driver may be built as a module ( = code which can be
 	  inserted in and removed from the running kernel whenever you want).
 	  The module will be called lockin_amplifier. If you want to do that, say M
 	  here.
-
-config SBT_LOCKAMP_FIFO_POP_RELAXED
-	bool "Read from the hardware FIFO without memory barriers"
-	help
-	  Use relaxed reads (without memory barriers) to access the FIFO.
-	  On ARM, this will omit the "dsb sy" instruction after each FIFO pop.
-
-	  Disable this option to test the effects of memory barriers on
-	  data integrity.
-
-	  In practice (on ARMv7-A), data integrity seems fine with the
-	  relaxed reads.
-
-config SBT_LOCKAMP_USE_SBUF
-	bool "Buffer FIFO values in the background"
-	default y
-	help
-	  Use a 4 MiB buffer between the hardware FIFO and the character device
-	  readers. Effectively, this gives the readers a bit more time before
-	  they need to read out another value.
-
-	  Without this 4 MiB buffer, the reader must ensure to read from the
-	  character device before the hardware FIFO (which is only 128 KiB)
-	  fills out. Otherwise, a data loss occurs.
-
-	  In essence, the 4 MiB buffer gives the readers some breathing room.
 
 endmenu
 

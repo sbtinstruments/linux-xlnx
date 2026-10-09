@@ -8,6 +8,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/mfd/dln2.h>
 #include <linux/spi/spi.h>
 #include <linux/pm_runtime.h>
@@ -543,7 +544,8 @@ static int dln2_spi_read_write_one(struct dln2_spi *dln2, const u8 *tx_data,
  * single ones due to device buffer constraints.
  */
 static int dln2_spi_rdwr(struct dln2_spi *dln2, const u8 *tx_data,
-			 u8 *rx_data, u16 data_len, u8 attr) {
+			 u8 *rx_data, u16 data_len, u8 attr)
+{
 	int ret;
 	u16 len;
 	u8 temp_attr;
@@ -594,12 +596,12 @@ static int dln2_spi_prepare_message(struct spi_master *master,
 	struct dln2_spi *dln2 = spi_master_get_devdata(master);
 	struct spi_device *spi = message->spi;
 
-	if (dln2->cs != spi->chip_select) {
-		ret = dln2_spi_cs_set_one(dln2, spi->chip_select);
+	if (dln2->cs != spi_get_chipselect(spi, 0)) {
+		ret = dln2_spi_cs_set_one(dln2, spi_get_chipselect(spi, 0));
 		if (ret < 0)
 			return ret;
 
-		dln2->cs = spi->chip_select;
+		dln2->cs = spi_get_chipselect(spi, 0);
 	}
 
 	return 0;
@@ -687,6 +689,8 @@ static int dln2_spi_probe(struct platform_device *pdev)
 	if (!master)
 		return -ENOMEM;
 
+	device_set_node(&master->dev, dev_fwnode(dev));
+
 	platform_set_drvdata(pdev, master);
 
 	dln2 = spi_master_get_devdata(master);
@@ -698,7 +702,6 @@ static int dln2_spi_probe(struct platform_device *pdev)
 	}
 
 	dln2->master = master;
-	dln2->master->dev.of_node = dev->of_node;
 	dln2->pdev = pdev;
 	dln2->port = pdata->port;
 	/* cs/mode can never be 0xff, so the first transfer will set them */
@@ -780,7 +783,7 @@ exit_free_master:
 
 static int dln2_spi_remove(struct platform_device *pdev)
 {
-	struct spi_master *master = spi_master_get(platform_get_drvdata(pdev));
+	struct spi_master *master = platform_get_drvdata(pdev);
 	struct dln2_spi *dln2 = spi_master_get_devdata(master);
 
 	pm_runtime_disable(&pdev->dev);

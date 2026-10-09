@@ -1,4 +1,4 @@
-//SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Xilinx V4L2 mem2mem driver
  *
@@ -123,7 +123,7 @@ struct xvip_m2m_dev {
 
 static inline struct xvip_pipeline *to_xvip_pipeline(struct media_entity *e)
 {
-	return container_of(e->pipe, struct xvip_pipeline, pipe);
+	return container_of(media_entity_pipeline(e), struct xvip_pipeline, pipe);
 }
 
 /**
@@ -183,7 +183,7 @@ xvip_dma_remote_subdev(struct media_pad *local, u32 *pad)
 {
 	struct media_pad *remote;
 
-	remote = media_entity_remote_pad(local);
+	remote = media_pad_remote_pad_first(local);
 	if (!remote || !is_media_entity_v4l2_subdev(remote->entity))
 		return NULL;
 
@@ -666,7 +666,7 @@ static void xvip_m2m_stop_streaming(struct vb2_queue *q)
 
 		/* Cleanup the pipeline and mark it as being stopped. */
 		xvip_pipeline_cleanup(pipe);
-		media_pipeline_stop(&dma->video.entity);
+		media_pipeline_stop(dma->video.entity.pads);
 	}
 
 	for (;;) {
@@ -695,10 +695,10 @@ static int xvip_m2m_start_streaming(struct vb2_queue *q, unsigned int count)
 	if (!xdev->num_subdevs)
 		return 0;
 
-	pipe = dma->video.entity.pipe
+	pipe = media_entity_pipeline(&dma->video.entity)
 	     ? to_xvip_pipeline(&dma->video.entity) : &dma->pipe;
 
-	ret = media_pipeline_start(&dma->video.entity, &pipe->pipe);
+	ret = media_pipeline_start(dma->video.entity.pads, &pipe->pipe);
 	if (ret < 0)
 		goto error;
 
@@ -720,7 +720,7 @@ static int xvip_m2m_start_streaming(struct vb2_queue *q, unsigned int count)
 
 	return 0;
 error_stop:
-	media_pipeline_stop(&dma->video.entity);
+	media_pipeline_stop(dma->video.entity.pads);
 
 error:
 	xvip_m2m_stop_streaming(q);
@@ -1433,7 +1433,7 @@ static struct video_device xvip_m2m_videodev = {
 	.release	= video_device_release_empty,
 	.vfl_dir	= VFL_DIR_M2M,
 	.device_caps	= V4L2_CAP_VIDEO_M2M_MPLANE | V4L2_CAP_STREAMING,
-	.vfl_type	= VFL_TYPE_GRABBER,
+	.vfl_type	= VFL_TYPE_VIDEO,
 };
 
 static const struct v4l2_m2m_ops xvip_m2m_ops = {
@@ -1463,7 +1463,7 @@ static int xvideo_register_media_controller(struct video_device *vdev)
 	vdev->entity.function = MEDIA_ENT_F_UNKNOWN;
 
 	switch (vdev->vfl_type) {
-	case VFL_TYPE_GRABBER:
+	case VFL_TYPE_VIDEO:
 		intf_type = MEDIA_INTF_T_V4L_VIDEO;
 		vdev->entity.function = MEDIA_ENT_F_IO_V4L;
 		break;
@@ -1616,7 +1616,7 @@ static int xvip_m2m_dma_init(struct xvip_m2m_dma *dma)
 	if (ret < 0)
 		goto error;
 
-	ret = video_register_device(&dma->video, VFL_TYPE_GRABBER, -1);
+	ret = video_register_device(&dma->video, VFL_TYPE_VIDEO, -1);
 	if (ret < 0) {
 		dev_err(xdev->dev, "Failed to register mem2mem video device\n");
 		goto tx_rx;
@@ -1667,6 +1667,8 @@ static int xvip_m2m_dma_alloc_init(struct xvip_m2m_dev *xdev)
 	ret = xvip_m2m_dma_init(xdev->dma);
 	if (ret) {
 		dev_err(xdev->dev, "DMA initialization failed\n");
+		devm_kfree(xdev->dev, dma);
+		xdev->dma = NULL;
 		return ret;
 	}
 
@@ -2072,8 +2074,10 @@ static void xvip_graph_cleanup(struct xvip_m2m_dev *xdev)
 	struct xvip_graph_entity *entityp;
 	struct xvip_graph_entity *entity;
 
-	v4l2_async_notifier_cleanup(&xdev->notifier);
-	v4l2_async_notifier_unregister(&xdev->notifier);
+	if (xdev->dma)
+		xvip_m2m_dma_deinit(xdev->dma);
+	v4l2_async_nf_cleanup(&xdev->notifier);
+	v4l2_async_nf_unregister(&xdev->notifier);
 
 	list_for_each_entry_safe(entity, entityp, &xdev->entities, list) {
 		of_node_put(entity->node);
@@ -2108,15 +2112,15 @@ static int xvip_graph_init(struct xvip_m2m_dev *xdev)
 
 	/* Register the subdevices notifier. */
 	list_for_each_entry(entity, &xdev->entities, list) {
-		ret = v4l2_async_notifier_add_subdev(&xdev->notifier,
-						     &entity->asd);
+		ret = __v4l2_async_nf_add_subdev(&xdev->notifier,
+						 &entity->asd);
 		if (ret)
 			goto done;
 	}
 
 	xdev->notifier.ops = &xvip_graph_notify_ops;
 
-	ret = v4l2_async_notifier_register(&xdev->v4l2_dev, &xdev->notifier);
+	ret = v4l2_async_nf_register(&xdev->v4l2_dev, &xdev->notifier);
 	if (ret < 0) {
 		dev_err(xdev->dev, "notifier registration failed\n");
 		goto done;
@@ -2152,11 +2156,17 @@ static int xvip_m2m_probe(struct platform_device *pdev)
 
 	xdev->dev = &pdev->dev;
 	INIT_LIST_HEAD(&xdev->entities);
-	v4l2_async_notifier_init(&xdev->notifier);
+	v4l2_async_nf_init(&xdev->notifier);
 
 	ret = xvip_composite_v4l2_init(xdev);
 	if (ret)
 		return -EINVAL;
+
+	xdev->m2m_dev = v4l2_m2m_init(&xvip_m2m_ops);
+	if (IS_ERR(xdev->m2m_dev)) {
+		dev_err(xdev->dev, "Failed to init mem2mem device\n");
+		return PTR_ERR(xdev->m2m_dev);
+	}
 
 	ret = xvip_graph_init(xdev);
 	if (ret < 0)
@@ -2169,13 +2179,6 @@ static int xvip_m2m_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, xdev);
-
-	xdev->m2m_dev = v4l2_m2m_init(&xvip_m2m_ops);
-	if (IS_ERR(xdev->m2m_dev)) {
-		dev_err(xdev->dev, "Failed to init mem2mem device\n");
-		ret = PTR_ERR(xdev->m2m_dev);
-		goto dma_cleanup;
-	}
 
 	dev_info(xdev->dev, "mem2mem device registered\n");
 	return 0;

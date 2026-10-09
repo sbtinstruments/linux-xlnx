@@ -261,7 +261,7 @@ static void xspi_chipselect(struct spi_device *qspi, bool is_high)
 			xqspi->regs + XSPI_SSR_OFFSET);
 	} else {
 		cs = xqspi->cs_inactive;
-		cs ^= BIT(qspi->chip_select);
+		cs ^= BIT(spi_get_chipselect(qspi, 0));
 		/* Activate the chip select */
 		xqspi->write_fn(cs, xqspi->regs + XSPI_SSR_OFFSET);
 	}
@@ -346,9 +346,9 @@ static int xilinx_spi_setup_transfer(struct spi_device *spi,
 	xspi->write_fn(config_reg, xspi->regs + XSPI_CR_OFFSET);
 
 	if (spi->mode & SPI_CS_HIGH)
-		xspi->cs_inactive &= ~BIT(spi->chip_select);
+		xspi->cs_inactive &= ~BIT(spi_get_chipselect(spi, 0));
 	else
-		xspi->cs_inactive |= BIT(spi->chip_select);
+		xspi->cs_inactive |= BIT(spi_get_chipselect(spi, 0));
 
 	return 0;
 }
@@ -615,11 +615,18 @@ static irqreturn_t xilinx_spi_irq(int irq, void *dev_id)
 	struct spi_master *master = dev_id;
 	struct xilinx_spi *xspi = spi_master_get_devdata(dev_id);
 	u32 ipif_isr;
+	u32 cr;
 	irqreturn_t status = IRQ_NONE;
 
 	/* Get the IPIF interrupts, and clear them immediately */
 	ipif_isr = xspi->read_fn(xspi->regs + XIPIF_V123B_IISR_OFFSET);
 	xspi->write_fn(ipif_isr, xspi->regs + XIPIF_V123B_IISR_OFFSET);
+
+	cr = xspi->read_fn(xspi->regs + XSPI_CR_OFFSET);
+	/* Enable master transaction inhibit */
+	cr |= XSPI_CR_TRANS_INHIBIT;
+	xspi->write_fn(cr, xspi->regs + XSPI_CR_OFFSET);
+
 	if (ipif_isr & XSPI_INTR_TX_EMPTY)  {
 		/* Transmission completed */
 		xspi->rx_fifo(xspi);
@@ -631,10 +638,14 @@ static irqreturn_t xilinx_spi_irq(int irq, void *dev_id)
 	}
 
 	if (!xspi->bytes_to_receive && !xspi->bytes_to_transfer) {
-		spi_finalize_current_transfer(master);
 		/* Disable the interrupts here. */
 		xspi->write_fn(0x0, xspi->regs + XIPIF_V123B_DGIER_OFFSET);
+		spi_finalize_current_transfer(master);
 	}
+
+	/* Disable master transaction inhibit */
+	cr &= ~XSPI_CR_TRANS_INHIBIT;
+	xspi->write_fn(cr, xspi->regs + XSPI_CR_OFFSET);
 
 	return status;
 }
@@ -798,8 +809,8 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 		goto clk_unprepare_all;
 	} else if (xspi->irq >= 0) {
 		/* Register for SPI Interrupt */
-		ret = devm_request_irq(&pdev->dev, xspi->irq, xilinx_spi_irq,
-				       0, dev_name(&pdev->dev), master);
+		ret = devm_request_irq(&pdev->dev, xspi->irq, xilinx_spi_irq, 0,
+				       dev_name(&pdev->dev), master);
 		if (ret)
 			goto clk_unprepare_all;
 	}
@@ -816,7 +827,7 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 	master->transfer_one = xspi_start_transfer;
 	master->prepare_transfer_hardware = xspi_prepare_transfer_hardware;
 	master->unprepare_transfer_hardware = xspi_unprepare_transfer_hardware;
-	master->bits_per_word_mask = SPI_BPW_MASK(8);
+	master->bits_per_word_mask = SPI_BPW_MASK(bits_per_word);
 	master->mode_bits = SPI_CPOL | SPI_CPHA | SPI_CS_HIGH;
 
 	xspi->bytes_per_word = bits_per_word / 8;

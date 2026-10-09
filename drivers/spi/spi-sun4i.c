@@ -167,7 +167,7 @@ static void sun4i_spi_set_cs(struct spi_device *spi, bool enable)
 	reg = sun4i_spi_read(sspi, SUN4I_CTL_REG);
 
 	reg &= ~SUN4I_CTL_CS_MASK;
-	reg |= SUN4I_CTL_CS(spi->chip_select);
+	reg |= SUN4I_CTL_CS(spi_get_chipselect(spi, 0));
 
 	/* We want to control the chip select manually */
 	reg |= SUN4I_CTL_CS_MANUAL;
@@ -198,7 +198,7 @@ static void sun4i_spi_set_cs(struct spi_device *spi, bool enable)
 
 static size_t sun4i_spi_max_transfer_size(struct spi_device *spi)
 {
-	return SUN4I_FIFO_DEPTH - 1;
+	return SUN4I_MAX_XFER_SIZE - 1;
 }
 
 static int sun4i_spi_transfer_one(struct spi_master *master,
@@ -280,7 +280,7 @@ static int sun4i_spi_transfer_one(struct spi_master *master,
 	 * SPI_CLK = MOD_CLK / (2 ^ (cdr + 1))
 	 * Or we can use CDR2, which is calculated with the formula:
 	 * SPI_CLK = MOD_CLK / (2 * (cdr + 1))
-	 * Wether we use the former or the latter is set through the
+	 * Whether we use the former or the latter is set through the
 	 * DRS bit.
 	 *
 	 * First try CDR2, and if we can't reach the expected

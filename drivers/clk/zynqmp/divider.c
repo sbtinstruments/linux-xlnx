@@ -2,7 +2,8 @@
 /*
  * Zynq UltraScale+ MPSoC Divider support
  *
- *  Copyright (C) 2016-2020 Xilinx
+ * Copyright (C), 2016 - 2019 Xilinx
+ * Copyright (C), 2023 Advanced Micro Devices, Inc.
  *
  * Adjustable divider clock implementation
  */
@@ -35,11 +36,11 @@
  * @is_frac:	The divider is a fractional divider
  * @clk_id:	Id of clock
  * @div_type:	divisor type (TYPE_DIV1 or TYPE_DIV2)
- * @max_div:	Maximum divisor value allowed
+ * @max_div:	maximum supported divisor (fetched from firmware)
  */
 struct zynqmp_clk_divider {
 	struct clk_hw hw;
-	u16 flags;
+	u8 flags;
 	bool is_frac;
 	u32 clk_id;
 	u32 div_type;
@@ -85,13 +86,12 @@ static unsigned long zynqmp_clk_divider_recalc_rate(struct clk_hw *hw,
 	u32 div_type = divider->div_type;
 	u32 div, value;
 	int ret;
-	const struct zynqmp_eemi_ops *eemi_ops = zynqmp_pm_get_eemi_ops();
 
-	ret = eemi_ops->clock_getdivider(clk_id, &div);
+	ret = zynqmp_pm_clock_getdivider(clk_id, &div);
 
 	if (ret)
-		pr_warn_once("%s() get divider failed for %s, ret = %d\n",
-			     __func__, clk_name, ret);
+		pr_debug("%s() get divider failed for %s, ret = %d\n",
+			 __func__, clk_name, ret);
 
 	if (div_type == TYPE_DIV1)
 		value = div & 0xFFFF;
@@ -111,8 +111,7 @@ static unsigned long zynqmp_clk_divider_recalc_rate(struct clk_hw *hw,
 	return DIV_ROUND_UP_ULL(parent_rate, value);
 }
 
-static void zynqmp_get_divider2_val(struct clk_hw *hw,
-				    unsigned long rate,
+static void zynqmp_get_divider2_val(struct clk_hw *hw, unsigned long rate,
 				    struct zynqmp_clk_divider *divider,
 				    u32 *bestdiv)
 {
@@ -175,15 +174,17 @@ static long zynqmp_clk_divider_round_rate(struct clk_hw *hw,
 	u32 div_type = divider->div_type;
 	u32 bestdiv;
 	int ret;
-	const struct zynqmp_eemi_ops *eemi_ops = zynqmp_pm_get_eemi_ops();
+	u8 width = 0;
+	u16 max;
+	struct device_node *np;
 
 	/* if read only, just return current value */
 	if (divider->flags & CLK_DIVIDER_READ_ONLY) {
-		ret = eemi_ops->clock_getdivider(clk_id, &bestdiv);
+		ret = zynqmp_pm_clock_getdivider(clk_id, &bestdiv);
 
 		if (ret)
-			pr_warn_once("%s() get divider failed for %s, ret = %d\n",
-				     __func__, clk_name, ret);
+			pr_debug("%s() get divider failed for %s, ret = %d\n",
+				 __func__, clk_name, ret);
 		if (div_type == TYPE_DIV1)
 			bestdiv = bestdiv & 0xFFFF;
 		else
@@ -195,23 +196,49 @@ static long zynqmp_clk_divider_round_rate(struct clk_hw *hw,
 		return DIV_ROUND_UP_ULL((u64)*prate, bestdiv);
 	}
 
-	bestdiv = zynqmp_divider_get_val(*prate, rate, divider->flags);
-
 	/*
-	 * In case of two divisors, compute best divider values and return
-	 * divider2 value based on compute value. div1 will  be automatically
-	 * set to optimum based on required total divider value.
+	 * Hack to use old algorithm for round rate div clocks. Currently PL
+	 * rate is getting changed because RPLL_TO_FPD clock is changing RPLL
+	 * rate for DP audio driver. Using old algorithm RPLL rate change is
+	 * less and its not affecting PL clocks more so as a temporary solution
+	 * use old algorithm for Versal and ZynqMP platforms.
+	 *
+	 * TBD: Remove this hack and use new algorithm for all platform once PL
+	 * clock issue is fixed with better way.
 	 */
-	if (div_type == TYPE_DIV2 &&
-	    (clk_hw_get_flags(hw) & CLK_SET_RATE_PARENT)) {
-		zynqmp_get_divider2_val(hw, rate, divider, &bestdiv);
+	np = of_find_compatible_node(NULL, NULL, "xlnx,versal-net");
+	if (np) {
+		max = divider->max_div;
+		while (max != 0) {
+			if ((max & 1) == 1)
+				width++;
+			max = max >> 1;
+		}
+
+		rate = divider_round_rate(hw, rate, prate, NULL, width, divider->flags);
+
+		if (divider->is_frac && (clk_hw_get_flags(hw) & CLK_SET_RATE_PARENT) &&
+		    (rate % *prate))
+			*prate = rate;
+	} else {
+		bestdiv = zynqmp_divider_get_val(*prate, rate, divider->flags);
+
+		/*
+		 * In case of two divisors, compute best divider values and return
+		 * divider2 value based on compute value. div1 will  be automatically
+		 * set to optimum based on required total divider value.
+		 */
+		if (div_type == TYPE_DIV2 && (clk_hw_get_flags(hw) &
+		    CLK_SET_RATE_PARENT))
+			zynqmp_get_divider2_val(hw, rate, divider, &bestdiv);
+
+		if ((clk_hw_get_flags(hw) & CLK_SET_RATE_PARENT) &&
+		    divider->is_frac)
+			bestdiv = rate % *prate ? 1 : bestdiv;
+
+		bestdiv = min_t(u32, bestdiv, divider->max_div);
+		*prate = rate * bestdiv;
 	}
-
-	if ((clk_hw_get_flags(hw) & CLK_SET_RATE_PARENT) && divider->is_frac)
-		bestdiv = rate % *prate ? 1 : bestdiv;
-
-	bestdiv = min_t(u32, bestdiv, divider->max_div);
-	*prate = rate * bestdiv;
 
 	return rate;
 }
@@ -233,7 +260,6 @@ static int zynqmp_clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 	u32 div_type = divider->div_type;
 	u32 value, div;
 	int ret;
-	const struct zynqmp_eemi_ops *eemi_ops = zynqmp_pm_get_eemi_ops();
 
 	value = zynqmp_divider_get_val(parent_rate, rate, divider->flags);
 	if (div_type == TYPE_DIV1) {
@@ -247,11 +273,11 @@ static int zynqmp_clk_divider_set_rate(struct clk_hw *hw, unsigned long rate,
 	if (divider->flags & CLK_DIVIDER_POWER_OF_TWO)
 		div = __ffs(div);
 
-	ret = eemi_ops->clock_setdivider(clk_id, div);
+	ret = zynqmp_pm_clock_setdivider(clk_id, div);
 
 	if (ret)
-		pr_warn_once("%s() set divider failed for %s, ret = %d\n",
-			     __func__, clk_name, ret);
+		pr_debug("%s() set divider failed for %s, ret = %d\n",
+			 __func__, clk_name, ret);
 
 	return ret;
 }
@@ -277,7 +303,6 @@ static const struct clk_ops zynqmp_clk_divider_ro_ops = {
  */
 static u32 zynqmp_clk_get_max_divisor(u32 clk_id, u32 type)
 {
-	const struct zynqmp_eemi_ops *eemi_ops = zynqmp_pm_get_eemi_ops();
 	struct zynqmp_pm_query_data qdata = {0};
 	u32 ret_payload[PAYLOAD_ARG_CNT];
 	int ret;
@@ -285,7 +310,7 @@ static u32 zynqmp_clk_get_max_divisor(u32 clk_id, u32 type)
 	qdata.qid = PM_QID_CLOCK_GET_MAX_DIVISOR;
 	qdata.arg1 = clk_id;
 	qdata.arg2 = type;
-	ret = eemi_ops->query_data(qdata, ret_payload);
+	ret = zynqmp_pm_query_data(qdata, ret_payload);
 	/*
 	 * To maintain backward compatibility return maximum possible value
 	 * (0xFFFF) if query for max divisor is not successful.
@@ -294,6 +319,29 @@ static u32 zynqmp_clk_get_max_divisor(u32 clk_id, u32 type)
 		return U16_MAX;
 
 	return ret_payload[1];
+}
+
+static inline unsigned long zynqmp_clk_map_divider_ccf_flags(
+					       const u32 zynqmp_type_flag)
+{
+	unsigned long ccf_flag = 0;
+
+	if (zynqmp_type_flag & ZYNQMP_CLK_DIVIDER_ONE_BASED)
+		ccf_flag |= CLK_DIVIDER_ONE_BASED;
+	if (zynqmp_type_flag & ZYNQMP_CLK_DIVIDER_POWER_OF_TWO)
+		ccf_flag |= CLK_DIVIDER_POWER_OF_TWO;
+	if (zynqmp_type_flag & ZYNQMP_CLK_DIVIDER_ALLOW_ZERO)
+		ccf_flag |= CLK_DIVIDER_ALLOW_ZERO;
+	if (zynqmp_type_flag & ZYNQMP_CLK_DIVIDER_POWER_OF_TWO)
+		ccf_flag |= CLK_DIVIDER_HIWORD_MASK;
+	if (zynqmp_type_flag & ZYNQMP_CLK_DIVIDER_ROUND_CLOSEST)
+		ccf_flag |= CLK_DIVIDER_ROUND_CLOSEST;
+	if (zynqmp_type_flag & ZYNQMP_CLK_DIVIDER_READ_ONLY)
+		ccf_flag |= CLK_DIVIDER_READ_ONLY;
+	if (zynqmp_type_flag & ZYNQMP_CLK_DIVIDER_MAX_AT_ZERO)
+		ccf_flag |= CLK_DIVIDER_MAX_AT_ZERO;
+
+	return ccf_flag;
 }
 
 /**
@@ -327,29 +375,16 @@ struct clk_hw *zynqmp_clk_register_divider(const char *name,
 		init.ops = &zynqmp_clk_divider_ro_ops;
 	else
 		init.ops = &zynqmp_clk_divider_ops;
-	/* CLK_FRAC is not defined in the common clk framework */
-	init.flags = nodes->flag & ~CLK_FRAC;
+
+	init.flags = zynqmp_clk_map_common_ccf_flags(nodes->flag);
+
 	init.parent_names = parents;
 	init.num_parents = 1;
 
 	/* struct clk_divider assignments */
 	div->is_frac = !!((nodes->flag & CLK_FRAC) |
 			  (nodes->custom_type_flag & CUSTOM_FLAG_CLK_FRAC));
-	div->flags = 0;
-	div->flags |= (nodes->type_flag & ZYNQMP_CLK_DIVIDER_ONE_BASED) ?
-		      CLK_DIVIDER_ONE_BASED : 0;
-	div->flags |= (nodes->type_flag & ZYNQMP_CLK_DIVIDER_POWER_OF_TWO) ?
-		      CLK_DIVIDER_POWER_OF_TWO : 0;
-	div->flags |= (nodes->type_flag & ZYNQMP_CLK_DIVIDER_ALLOW_ZERO) ?
-		      CLK_DIVIDER_ALLOW_ZERO : 0;
-	div->flags |= (nodes->type_flag & ZYNQMP_CLK_DIVIDER_POWER_OF_TWO) ?
-		      CLK_DIVIDER_HIWORD_MASK : 0;
-	div->flags |= (nodes->type_flag & ZYNQMP_CLK_DIVIDER_ROUND_CLOSEST) ?
-		      CLK_DIVIDER_ROUND_CLOSEST : 0;
-	div->flags |= (nodes->type_flag & ZYNQMP_CLK_DIVIDER_READ_ONLY) ?
-		      CLK_DIVIDER_READ_ONLY : 0;
-	div->flags |= (nodes->type_flag & ZYNQMP_CLK_DIVIDER_MAX_AT_ZERO) ?
-		      CLK_DIVIDER_MAX_AT_ZERO : 0;
+	div->flags = zynqmp_clk_map_divider_ccf_flags(nodes->type_flag);
 	div->hw.init = &init;
 	div->clk_id = clk_id;
 	div->div_type = nodes->type;

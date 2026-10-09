@@ -24,11 +24,8 @@ String Conversions
 .. kernel-doc:: lib/vsprintf.c
    :export:
 
-.. kernel-doc:: include/linux/kernel.h
-   :functions: kstrtol
-
-.. kernel-doc:: include/linux/kernel.h
-   :functions: kstrtoul
+.. kernel-doc:: include/linux/kstrtox.h
+   :functions: kstrtol kstrtoul
 
 .. kernel-doc:: lib/kstrtox.c
    :export:
@@ -57,7 +54,13 @@ The Linux kernel provides more basic utility functions.
 Bit Operations
 --------------
 
-.. kernel-doc:: include/asm-generic/bitops-instrumented.h
+.. kernel-doc:: include/asm-generic/bitops/instrumented-atomic.h
+   :internal:
+
+.. kernel-doc:: include/asm-generic/bitops/instrumented-non-atomic.h
+   :internal:
+
+.. kernel-doc:: include/asm-generic/bitops/instrumented-lock.h
    :internal:
 
 Bitmap Operations
@@ -114,6 +117,12 @@ Text Searching
 
 CRC and Math Functions in Linux
 ===============================
+
+Arithmetic Overflow Checking
+----------------------------
+
+.. kernel-doc:: include/linux/overflow.h
+   :internal:
 
 CRC Functions
 -------------
@@ -220,16 +229,10 @@ Module Loading
 Inter Module support
 --------------------
 
-Refer to the file kernel/module.c for more information.
+Refer to the files in kernel/module/ for more information.
 
 Hardware Interfaces
 ===================
-
-Interrupt Handling
-------------------
-
-.. kernel-doc:: kernel/irq/manage.c
-   :export:
 
 DMA Channels
 ------------
@@ -282,6 +285,7 @@ Accounting Framework
 Block Devices
 =============
 
+.. kernel-doc:: include/linux/bio.h
 .. kernel-doc:: block/blk-core.c
    :export:
 
@@ -295,9 +299,6 @@ Block Devices
    :internal:
 
 .. kernel-doc:: block/blk-settings.c
-   :export:
-
-.. kernel-doc:: block/blk-exec.c
    :export:
 
 .. kernel-doc:: block/blk-flush.c
@@ -316,6 +317,9 @@ Block Devices
    :internal:
 
 .. kernel-doc:: block/genhd.c
+   :export:
+
+.. kernel-doc:: block/bdev.c
    :export:
 
 Char devices

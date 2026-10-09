@@ -202,7 +202,7 @@ struct s3c24xx_dma_phy {
  * struct s3c24xx_dma_chan - this structure wraps a DMA ENGINE channel
  * @id: the id of the channel
  * @name: name of the channel
- * @vc: wrappped virtual channel
+ * @vc: wrapped virtual channel
  * @phy: the physical channel utilized by this channel, if there is one
  * @runtime_addr: address for RX/TX according to the runtime config
  * @at: active transaction on this channel
@@ -519,15 +519,6 @@ static void s3c24xx_dma_start_next_txd(struct s3c24xx_dma_chan *s3cchan)
 	s3c24xx_dma_start_next_sg(s3cchan, txd);
 }
 
-static void s3c24xx_dma_free_txd_list(struct s3c24xx_dma_engine *s3cdma,
-				struct s3c24xx_dma_chan *s3cchan)
-{
-	LIST_HEAD(head);
-
-	vchan_get_all_descriptors(&s3cchan->vc, &head);
-	vchan_dma_desc_free_list(&s3cchan->vc, &head);
-}
-
 /*
  * Try to allocate a physical channel.  When successful, assign it to
  * this virtual channel, and initiate the next descriptor.  The
@@ -709,8 +700,9 @@ static int s3c24xx_dma_terminate_all(struct dma_chan *chan)
 {
 	struct s3c24xx_dma_chan *s3cchan = to_s3c24xx_dma_chan(chan);
 	struct s3c24xx_dma_engine *s3cdma = s3cchan->host;
+	LIST_HEAD(head);
 	unsigned long flags;
-	int ret = 0;
+	int ret;
 
 	spin_lock_irqsave(&s3cchan->vc.lock, flags);
 
@@ -734,7 +726,15 @@ static int s3c24xx_dma_terminate_all(struct dma_chan *chan)
 	}
 
 	/* Dequeue jobs not yet fired as well */
-	s3c24xx_dma_free_txd_list(s3cdma, s3cchan);
+
+	vchan_get_all_descriptors(&s3cchan->vc, &head);
+
+	spin_unlock_irqrestore(&s3cchan->vc.lock, flags);
+
+	vchan_dma_desc_free_list(&s3cchan->vc, &head);
+
+	return 0;
+
 unlock:
 	spin_unlock_irqrestore(&s3cchan->vc.lock, flags);
 
@@ -1094,7 +1094,7 @@ static int s3c24xx_dma_init_virtual_channels(struct s3c24xx_dma_engine *s3cdma,
 	INIT_LIST_HEAD(&dmadev->channels);
 
 	/*
-	 * Register as many many memcpy as we have physical channels,
+	 * Register as many memcpy as we have physical channels,
 	 * we won't always be able to use all but the code will have
 	 * to cope with that situation.
 	 */
@@ -1198,7 +1198,7 @@ static int s3c24xx_dma_probe(struct platform_device *pdev)
 
 	/* Basic sanity check */
 	if (pdata->num_phy_channels > MAX_DMA_CHANNELS) {
-		dev_err(&pdev->dev, "to many dma channels %d, max %d\n",
+		dev_err(&pdev->dev, "too many dma channels %d, max %d\n",
 			pdata->num_phy_channels, MAX_DMA_CHANNELS);
 		return -EINVAL;
 	}

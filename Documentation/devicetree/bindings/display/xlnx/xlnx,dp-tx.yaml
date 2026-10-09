@@ -12,24 +12,38 @@ maintainers:
 description: |
   The Xilinx DisplayPort Tx Subsystem contains several subcores to implement
   a DisplayPort Transmitter and outputs video data using DisplayPort protocol.
-  For more details, please refer to PG199 at https://www.xilinx.com/support/documentation/ip_documentation/dp_tx_subsystem/v2_1/pg199-displayport-tx-subsystem.pdf
+  For more details, please refer to PG199 at
+  https://www.xilinx.com/support/documentation/ip_documentation/dp_tx_subsystem/v2_1/pg199-displayport-tx-subsystem.pdf
 
 properties:
   compatible:
-    items:
-      - enum:
-          - xlnx,v-dp-txss-3.0
+    enum:
+      - xlnx,v-dp-txss-3.0
+      - xlnx,v-dp-txss-3.1
 
   reg:
-    maxItems: 1
+    maxItems: 2
     description: DisplayPort Transmitter Subsystem registers
 
   reg-names:
     items:
       - const: dp_base
+      - const: gt_quad_base
 
   interrupts:
-    maxItems: 1
+    minItems: 1
+    maxItems: 4
+
+  interrupt-names:
+    description: Only dptxss_dp_irq is mandatory. Others are optional.
+                 dptxss_timer_irq will be present when HDCP 1x or 2x is selected.
+                 dptxss_hdcp_irq will be present when HDCP 1x is selected.
+                 dptxss_hdcp22_cipher_irq will be present when HDCP 2x is selected.
+    items:
+      - const: dptxss_dp_irq
+      - const: dptxss_timer_irq
+      - const: dptxss_hdcp_irq
+      - const: dptxss_hdcp22_cipher_irq
 
   clocks:
     description: List of clock specifiers
@@ -52,6 +66,12 @@ properties:
       - const: dp-phy1
       - const: dp-phy2
       - const: dp-phy3
+
+  xlnx,vtc-offset:
+    description: This denotes register offset address of VTC sub-core of
+                 DisplayPort Transmitter Subsystem.
+    allOf:
+      - $ref: /schemas/types.yaml#/definitions/uint32
 
   xlnx,max-lanes:
     description: Max number of lanes that IP configured with.
@@ -87,6 +107,25 @@ properties:
     allOf:
       - $ref: /schemas/types.yaml#/definitions/uint32
       - enum: [2, 3, 4, 5, 6, 7, 8]
+
+  xlnx,hdcp22-enable:
+    type: boolean
+    description: |
+      Present when HDCP2.2 is present in design.
+
+  xlnx,hdcp-enable:
+    type: boolean
+    description: |
+      Present when HDCP1.4 is present in design.
+
+  xlnx,versal-gt:
+    type: boolean
+    description: |
+      Boolean property present when versal GT is present in design.
+
+  xlnx,xilinx-vfmc:
+    description: phandle of xilinx video FMC node
+    $ref: /schemas/types.yaml#/definitions/phandle
 
   ports:
     type: object
@@ -132,23 +171,40 @@ required:
 
 additionalProperties: false
 
+if:
+  properties:
+    compatible:
+      contains:
+        const: xlnx,v-dp-txss-3.1
+
+then:
+  required:
+    - xlnx,vtc-offset
+
 examples:
- - |
+  - |
    bus {
        #address-cells = <2>;
        #size-cells = <2>;
 
        v_dp_txss1@a0100000 {
-           compatible = "xlnx,v-dp-txss-3.0";
-           reg = <0x0 0xa0100000 0x0 0x40000>;
-           reg-names = "dp_base";
+           compatible = "xlnx,v-dp-txss-3.1";
+           reg = <0x0 0xa0100000 0x0 0x40000>, <0x0 0xa4080000 0x0 0x10000>;
+           reg-names = "dp_base", "gt_quad_base";
            clock-names = "s_axi_aclk", "tx_vid_clk";
            clocks = <&zynqmp_clk 71>, <&si570_1>;
-           interrupts = <0 92 4>;
+           interrupt-names = "dptxss_dp_irq", "dptxss_timer_irq", "dptxss_hdcp_irq",
+                              "dptxss_hdcp22_cipher_irq";
+           interrupts = <0 92 4>, <0 108 4>, <0 111 4>, <0 109 4>;
+           xlnx,vtc-offset = <0x8000>;
            xlnx,max-lanes = <4>;
            xlnx,max-link-rate = <810000>;
            xlnx,bpc = <8>;
-           xlnx,audio-chan = <2>;
+           xlnx,audio-channels = <2>;
+           xlnx,hdcp22-enable;
+           xlnx,hdcp-enable;
+           xlnx,versal-gt;
+           xlnx,xilinx-vfmc = <&xfmc>;
            phy-names = "dp-phy0", "dp-phy1", "dp-phy2", "dp-phy3";
            phys = <&vphy_lane0 0 1 1 0>, <&vphy_lane1 0 1 1 0>,
                   <&vphy_lane2 0 1 1 0>, <&vphy_lane3 0 1 1 0>;

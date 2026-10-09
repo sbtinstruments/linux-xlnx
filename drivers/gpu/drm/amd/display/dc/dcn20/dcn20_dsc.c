@@ -23,7 +23,8 @@
  *
  */
 
-#ifdef CONFIG_DRM_AMD_DC_DSC_SUPPORT
+#include <drm/display/drm_dsc_helper.h>
+
 #include "reg_helper.h"
 #include "dcn20_dsc.h"
 #include "dsc/dscc_types.h"
@@ -46,6 +47,7 @@ static void dsc2_set_config(struct display_stream_compressor *dsc, const struct 
 static bool dsc2_get_packed_pps(struct display_stream_compressor *dsc, const struct dsc_config *dsc_cfg, uint8_t *dsc_packed_pps);
 static void dsc2_enable(struct display_stream_compressor *dsc, int opp_pipe);
 static void dsc2_disable(struct display_stream_compressor *dsc);
+static void dsc2_disconnect(struct display_stream_compressor *dsc);
 
 const struct dsc_funcs dcn20_dsc_funcs = {
 	.dsc_get_enc_caps = dsc2_get_enc_caps,
@@ -55,6 +57,7 @@ const struct dsc_funcs dcn20_dsc_funcs = {
 	.dsc_get_packed_pps = dsc2_get_packed_pps,
 	.dsc_enable = dsc2_enable,
 	.dsc_disable = dsc2_disable,
+	.dsc_disconnect = dsc2_disconnect,
 };
 
 /* Macro definitios for REG_SET macros*/
@@ -118,7 +121,7 @@ static void dsc2_get_enc_caps(struct dsc_enc_caps *dsc_enc_caps, int pixel_clock
 
 	dsc_enc_caps->color_formats.bits.RGB = 1;
 	dsc_enc_caps->color_formats.bits.YCBCR_444 = 1;
-	dsc_enc_caps->color_formats.bits.YCBCR_SIMPLE_422 = 0;
+	dsc_enc_caps->color_formats.bits.YCBCR_SIMPLE_422 = 1;
 	dsc_enc_caps->color_formats.bits.YCBCR_NATIVE_422 = 0;
 	dsc_enc_caps->color_formats.bits.YCBCR_NATIVE_420 = 1;
 
@@ -157,7 +160,14 @@ static void dsc2_read_state(struct display_stream_compressor *dsc, struct dcn_ds
 
 	REG_GET(DSC_TOP_CONTROL, DSC_CLOCK_EN, &s->dsc_clock_en);
 	REG_GET(DSCC_PPS_CONFIG3, SLICE_WIDTH, &s->dsc_slice_width);
-	REG_GET(DSCC_PPS_CONFIG1, BITS_PER_PIXEL, &s->dsc_bytes_per_pixel);
+	REG_GET(DSCC_PPS_CONFIG1, BITS_PER_PIXEL, &s->dsc_bits_per_pixel);
+	REG_GET(DSCC_PPS_CONFIG3, SLICE_HEIGHT, &s->dsc_slice_height);
+	REG_GET(DSCC_PPS_CONFIG1, CHUNK_SIZE, &s->dsc_chunk_size);
+	REG_GET(DSCC_PPS_CONFIG2, PIC_WIDTH, &s->dsc_pic_width);
+	REG_GET(DSCC_PPS_CONFIG2, PIC_HEIGHT, &s->dsc_pic_height);
+	REG_GET(DSCC_PPS_CONFIG7, SLICE_BPG_OFFSET, &s->dsc_slice_bpg_offset);
+	REG_GET_2(DSCRM_DSC_FORWARD_CONFIG, DSCRM_DSC_FORWARD_EN, &s->dsc_fw_en,
+		DSCRM_DSC_OPP_PIPE_SOURCE, &s->dsc_opp_source);
 }
 
 
@@ -207,6 +217,9 @@ static bool dsc2_get_packed_pps(struct display_stream_compressor *dsc, const str
 	struct dsc_reg_values dsc_reg_vals;
 	struct dsc_optc_config dsc_optc_cfg;
 
+	memset(&dsc_reg_vals, 0, sizeof(dsc_reg_vals));
+	memset(&dsc_optc_cfg, 0, sizeof(dsc_optc_cfg));
+
 	DC_LOG_DSC("Getting packed DSC PPS for DSC Config:");
 	dsc_config_log(dsc, dsc_cfg);
 	DC_LOG_DSC("DSC Picture Parameter Set (PPS):");
@@ -222,9 +235,18 @@ static bool dsc2_get_packed_pps(struct display_stream_compressor *dsc, const str
 static void dsc2_enable(struct display_stream_compressor *dsc, int opp_pipe)
 {
 	struct dcn20_dsc *dsc20 = TO_DCN20_DSC(dsc);
+	int dsc_clock_en;
+	int dsc_fw_config;
+	int enabled_opp_pipe;
 
-	/* TODO Check if DSC alreay in use? */
-	DC_LOG_DSC("enable DSC at opp pipe %d", opp_pipe);
+	DC_LOG_DSC("enable DSC %d at opp pipe %d", dsc->inst, opp_pipe);
+
+	REG_GET(DSC_TOP_CONTROL, DSC_CLOCK_EN, &dsc_clock_en);
+	REG_GET_2(DSCRM_DSC_FORWARD_CONFIG, DSCRM_DSC_FORWARD_EN, &dsc_fw_config, DSCRM_DSC_OPP_PIPE_SOURCE, &enabled_opp_pipe);
+	if ((dsc_clock_en || dsc_fw_config) && enabled_opp_pipe != opp_pipe) {
+		DC_LOG_DSC("ERROR: DSC %d at opp pipe %d already enabled!", dsc->inst, enabled_opp_pipe);
+		ASSERT(0);
+	}
 
 	REG_UPDATE(DSC_TOP_CONTROL,
 		DSC_CLOCK_EN, 1);
@@ -238,8 +260,18 @@ static void dsc2_enable(struct display_stream_compressor *dsc, int opp_pipe)
 static void dsc2_disable(struct display_stream_compressor *dsc)
 {
 	struct dcn20_dsc *dsc20 = TO_DCN20_DSC(dsc);
+	int dsc_clock_en;
+	int dsc_fw_config;
+	int enabled_opp_pipe;
 
-	DC_LOG_DSC("disable DSC");
+	DC_LOG_DSC("disable DSC %d", dsc->inst);
+
+	REG_GET(DSC_TOP_CONTROL, DSC_CLOCK_EN, &dsc_clock_en);
+	REG_GET_2(DSCRM_DSC_FORWARD_CONFIG, DSCRM_DSC_FORWARD_EN, &dsc_fw_config, DSCRM_DSC_OPP_PIPE_SOURCE, &enabled_opp_pipe);
+	if (!dsc_clock_en || !dsc_fw_config) {
+		DC_LOG_DSC("ERROR: DSC %d at opp pipe %d already disabled!", dsc->inst, enabled_opp_pipe);
+		ASSERT(0);
+	}
 
 	REG_UPDATE(DSCRM_DSC_FORWARD_CONFIG,
 		DSCRM_DSC_FORWARD_EN, 0);
@@ -248,6 +280,15 @@ static void dsc2_disable(struct display_stream_compressor *dsc)
 		DSC_CLOCK_EN, 0);
 }
 
+static void dsc2_disconnect(struct display_stream_compressor *dsc)
+{
+	struct dcn20_dsc *dsc20 = TO_DCN20_DSC(dsc);
+
+	DC_LOG_DSC("disconnect DSC %d", dsc->inst);
+
+	REG_UPDATE(DSCRM_DSC_FORWARD_CONFIG,
+		DSCRM_DSC_FORWARD_EN, 0);
+}
 
 /* This module's internal functions */
 static void dsc_log_pps(struct display_stream_compressor *dsc, struct drm_dsc_config *pps)
@@ -348,6 +389,7 @@ static bool dsc_prepare_config(const struct dsc_config *dsc_cfg, struct dsc_reg_
 	dsc_reg_vals->pps.block_pred_enable = dsc_cfg->dc_dsc_cfg.block_pred_enable;
 	dsc_reg_vals->pps.line_buf_depth = dsc_cfg->dc_dsc_cfg.linebuf_depth;
 	dsc_reg_vals->alternate_ich_encoding_en = dsc_reg_vals->pps.dsc_version_minor == 1 ? 0 : 1;
+	dsc_reg_vals->ich_reset_at_eol = (dsc_cfg->is_odm || dsc_reg_vals->num_slices_h > 1) ? 0xF : 0;
 
 	// TODO: in addition to validating slice height (pic height must be divisible by slice height),
 	// see what happens when the same condition doesn't apply for slice_width/pic_width.
@@ -510,7 +552,6 @@ static void dsc_update_from_dsc_parameters(struct dsc_reg_values *reg_vals, cons
 		reg_vals->pps.rc_buf_thresh[i] = reg_vals->pps.rc_buf_thresh[i] >> 6;
 
 	reg_vals->rc_buffer_model_size = dsc_params->rc_buffer_model_size;
-	reg_vals->ich_reset_at_eol = reg_vals->num_slices_h == 1 ? 0 : 0xf;
 }
 
 static void dsc_write_to_registers(struct display_stream_compressor *dsc, const struct dsc_reg_values *reg_vals)
@@ -534,11 +575,18 @@ static void dsc_write_to_registers(struct display_stream_compressor *dsc, const 
 		PIC_HEIGHT, reg_vals->pps.pic_height);
 
 	// dscc registers
-	REG_SET_4(DSCC_CONFIG0, 0,
-		ICH_RESET_AT_END_OF_LINE, reg_vals->ich_reset_at_eol,
-		NUMBER_OF_SLICES_PER_LINE, reg_vals->num_slices_h - 1,
-		ALTERNATE_ICH_ENCODING_EN, reg_vals->alternate_ich_encoding_en,
-		NUMBER_OF_SLICES_IN_VERTICAL_DIRECTION, reg_vals->num_slices_v - 1);
+	if (dsc20->dsc_mask->ICH_RESET_AT_END_OF_LINE == 0) {
+		REG_SET_3(DSCC_CONFIG0, 0,
+			  NUMBER_OF_SLICES_PER_LINE, reg_vals->num_slices_h - 1,
+			  ALTERNATE_ICH_ENCODING_EN, reg_vals->alternate_ich_encoding_en,
+			  NUMBER_OF_SLICES_IN_VERTICAL_DIRECTION, reg_vals->num_slices_v - 1);
+	} else {
+		REG_SET_4(DSCC_CONFIG0, 0, ICH_RESET_AT_END_OF_LINE,
+			  reg_vals->ich_reset_at_eol, NUMBER_OF_SLICES_PER_LINE,
+			  reg_vals->num_slices_h - 1, ALTERNATE_ICH_ENCODING_EN,
+			  reg_vals->alternate_ich_encoding_en, NUMBER_OF_SLICES_IN_VERTICAL_DIRECTION,
+			  reg_vals->num_slices_v - 1);
+	}
 
 	REG_SET(DSCC_CONFIG1, 0,
 			DSCC_RATE_CONTROL_BUFFER_MODEL_SIZE, reg_vals->rc_buffer_model_size);
@@ -696,23 +744,5 @@ static void dsc_write_to_registers(struct display_stream_compressor *dsc, const 
 		RANGE_MAX_QP14, reg_vals->pps.rc_range_params[14].range_max_qp,
 		RANGE_BPG_OFFSET14, reg_vals->pps.rc_range_params[14].range_bpg_offset);
 
-	if (IS_FPGA_MAXIMUS_DC(dsc20->base.ctx->dce_environment)) {
-		/* It's safe to do this as long as debug bus is not being used in DAL Diag environment.
-		 *
-		 * This is because DSCC_PPS_CONFIG4.INITIAL_DEC_DELAY is a read-only register field (because it's a decoder
-		 * value not required by DSC encoder). However, since decoding fails when this value is missing from PPS, it's
-		 * required to communicate this value to the PPS header. When testing on FPGA, the values for PPS header are
-		 * being read from Diag register dump. The register below is used in place of a scratch register to make
-		 * 'initial_dec_delay' available.
-		 */
-
-		temp_int = reg_vals->pps.initial_dec_delay;
-		REG_SET_4(DSCC_TEST_DEBUG_BUS_ROTATE, 0,
-			DSCC_TEST_DEBUG_BUS0_ROTATE, temp_int & 0x1f,
-			DSCC_TEST_DEBUG_BUS1_ROTATE, temp_int >> 5 & 0x1f,
-			DSCC_TEST_DEBUG_BUS2_ROTATE, temp_int >> 10 & 0x1f,
-			DSCC_TEST_DEBUG_BUS3_ROTATE, temp_int >> 15 & 0x1);
-	}
 }
 
-#endif

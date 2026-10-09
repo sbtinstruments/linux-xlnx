@@ -1286,7 +1286,7 @@ static void xm2msc_device_run(void *priv)
 		 * channel while streaming is going on
 		 */
 		if (xm2msc->out_streamed_chan || xm2msc->cap_streamed_chan)
-			dev_err(xm2msc->dev,
+			dev_dbg(xm2msc->dev,
 				"Buffer not available, streaming chan 0x%x\n",
 				xm2msc->cap_streamed_chan);
 
@@ -1430,6 +1430,15 @@ xm2msc_cal_imagesize(struct xm2msc_chan_ctx *chan_ctx,
 		 */
 		q_data->sizeimage[0] +=
 				q_data->stride * (height / 2);
+		break;
+	case V4L2_PIX_FMT_NV16:
+	case V4L2_PIX_FMT_XV20:
+		/*
+		 * Adding chroma plane size as NV16
+		 * have a contiguous buffer for luma and chrome
+		 */
+		q_data->sizeimage[0] +=
+				q_data->stride * height;
 		break;
 	case V4L2_PIX_FMT_NV12M:
 	case V4L2_PIX_FMT_XV15M:
@@ -2286,6 +2295,13 @@ static int xm2msc_parse_of(struct platform_device *pdev,
 	/* read supported video formats and update internal table */
 	hw_vid_fmt_cnt = of_property_count_strings(node, "xlnx,vid-formats");
 
+	/* Validate the number of strings returned */
+	if (hw_vid_fmt_cnt < 0)
+		return hw_vid_fmt_cnt;
+
+	if (hw_vid_fmt_cnt > ARRAY_SIZE(formats))
+		return -EINVAL;
+
 	ret = of_property_read_string_array(node, "xlnx,vid-formats",
 					    vid_fmts, hw_vid_fmt_cnt);
 	if (ret < 0) {
@@ -2384,7 +2400,7 @@ static int xm2m_msc_probe(struct platform_device *pdev)
 		vfd->device_caps = V4L2_CAP_VIDEO_M2M_MPLANE |
 				   V4L2_CAP_STREAMING;
 
-		ret = video_register_device(vfd, VFL_TYPE_GRABBER, chan);
+		ret = video_register_device(vfd, VFL_TYPE_VIDEO, chan);
 		if (ret) {
 			v4l2_err(&xm2msc->v4l2_dev,
 				 "Failed to register video dev for chan %d\n",

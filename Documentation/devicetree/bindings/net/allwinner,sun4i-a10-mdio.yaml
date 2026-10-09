@@ -4,11 +4,11 @@
 $id: http://devicetree.org/schemas/net/allwinner,sun4i-a10-mdio.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Allwinner A10 MDIO Controller Device Tree Bindings
+title: Allwinner A10 MDIO Controller
 
 maintainers:
   - Chen-Yu Tsai <wens@csie.org>
-  - Maxime Ripard <maxime.ripard@bootlin.com>
+  - Maxime Ripard <mripard@kernel.org>
 
 allOf:
   - $ref: "mdio.yaml#"
@@ -49,6 +49,8 @@ required:
   - compatible
   - reg
 
+unevaluatedProperties: false
+
 examples:
   - |
     mdio@1c0b080 {
@@ -62,9 +64,5 @@ examples:
             reg = <0>;
         };
     };
-
-# FIXME: We should set it, but it would report all the generic
-# properties as additional properties.
-# additionalProperties: false
 
 ...

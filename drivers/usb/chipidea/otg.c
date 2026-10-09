@@ -22,7 +22,8 @@
 #include "otg_fsm.h"
 
 /**
- * hw_read_otgsc returns otgsc register bits value.
+ * hw_read_otgsc - returns otgsc register bits value.
+ * @ci: the controller
  * @mask: bitfield mask
  */
 u32 hw_read_otgsc(struct ci_hdrc *ci, u32 mask)
@@ -74,7 +75,8 @@ u32 hw_read_otgsc(struct ci_hdrc *ci, u32 mask)
 }
 
 /**
- * hw_write_otgsc updates target bits of OTGSC register.
+ * hw_write_otgsc - updates target bits of OTGSC register.
+ * @ci: the controller
  * @mask: bitfield mask
  * @data: to be written
  */
@@ -138,8 +140,9 @@ void ci_handle_vbus_change(struct ci_hdrc *ci)
 }
 
 /**
- * When we switch to device mode, the vbus value should be lower
- * than OTGSC_BSV before connecting to host.
+ * hw_wait_vbus_lower_bsv - When we switch to device mode, the vbus value
+ *                          should be lower than OTGSC_BSV before connecting
+ *                          to host.
  *
  * @ci: the controller
  *
@@ -165,11 +168,17 @@ static int hw_wait_vbus_lower_bsv(struct ci_hdrc *ci)
 static void ci_handle_id_switch(struct ci_hdrc *ci)
 {
 	enum ci_role role = ci_otg_role(ci);
-	int ret;
 
 	if (role != ci->role) {
 		dev_dbg(ci->dev, "switching from %s to %s\n",
 			ci_role(ci)->name, ci->roles[role]->name);
+
+		if (ci->vbus_active && ci->role == CI_ROLE_GADGET)
+			/*
+			 * vbus disconnect event is lost due to role
+			 * switch occurs during system suspend.
+			 */
+			usb_gadget_vbus_disconnect(&ci->gadget);
 
 		ci_role_stop(ci);
 
@@ -184,10 +193,7 @@ static void ci_handle_id_switch(struct ci_hdrc *ci)
 			 */
 			hw_wait_vbus_lower_bsv(ci);
 
-		ret = ci_role_start(ci, role);
-		if (ret < 0)
-			dev_dbg(ci->dev, "switching err %d\n", ret);
-
+		ci_role_start(ci, role);
 		/* vbus change may have already occurred */
 		if (role == CI_ROLE_GADGET)
 			ci_handle_vbus_change(ci);
@@ -226,7 +232,7 @@ static void ci_otg_work(struct work_struct *work)
 
 /**
  * ci_hdrc_otg_init - initialize otg struct
- * ci: the controller
+ * @ci: the controller
  */
 int ci_hdrc_otg_init(struct ci_hdrc *ci)
 {
@@ -245,14 +251,13 @@ int ci_hdrc_otg_init(struct ci_hdrc *ci)
 
 /**
  * ci_hdrc_otg_destroy - destroy otg struct
- * ci: the controller
+ * @ci: the controller
  */
 void ci_hdrc_otg_destroy(struct ci_hdrc *ci)
 {
-	if (ci->wq) {
-		flush_workqueue(ci->wq);
+	if (ci->wq)
 		destroy_workqueue(ci->wq);
-	}
+
 	/* Disable all OTG irq and clear status */
 	hw_write_otgsc(ci, OTGSC_INT_EN_BITS | OTGSC_INT_STATUS_BITS,
 						OTGSC_INT_STATUS_BITS);

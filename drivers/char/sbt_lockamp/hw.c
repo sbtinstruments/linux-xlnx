@@ -5,7 +5,6 @@
  * Copyright (c) 2019, Frederik Peter Aalund <fpa@sbtinstruments.com>
  */
 #include <asm/io.h>
-#include <linux/circ_buf.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/ioport.h>
@@ -104,38 +103,4 @@ void lockamp_get_adc_samples(struct lockamp *lockamp, s32 *adc_samples)
 	for (i = 0; LOCKAMP_ADC_SAMPLES_SIZE_S32 > i; ++i) {
 		adc_samples[i] = ioread32(lockamp->control + LOCKAMP_REG_ADC_BUFFER);
 	}
-}
-
-size_t lockamp_fifo_move_to_sbuf(struct lockamp *lockamp)
-{
-	size_t i;
-	ptrdiff_t head, tail;
-	size_t bounded_size_n, signal_buf_space_n;
-	struct circ_sample_buf *sbuf = &lockamp->signal_buf;
-	size_t fifo_size_n = lockamp_fifo_size_n(lockamp);
-	size_t sbuf_cap_minus_one = sbuf->capacity_n - 1;
-	if (fifo_size_n > LOCKAMP_FIFO_CAPACITY_N * 3 / 4) {
-		/* Note that these 'print statements' are slow. May take 5-10 ms. */
-		dev_warn_ratelimited(lockamp->dev, "FIFO is over 3/4 filled (%d/%d). Data loss may be imminent.\n",
-									  fifo_size_n, LOCKAMP_FIFO_CAPACITY_N);
-	}
-
-	head = sbuf->head;
-	tail = READ_ONCE(sbuf->tail);
-	signal_buf_space_n = CIRC_SPACE(head, tail, sbuf->capacity_n);
-
-	if (0 == signal_buf_space_n) {
-		atomic_inc(&lockamp->desyncs);
-		/* Note that these 'print statements' are slow. May take 5-10 ms. */
-		dev_warn_ratelimited(lockamp->dev, "Data loss. There is no more space in the signal buffer.\n");
-	}
-
-	bounded_size_n = min(signal_buf_space_n, fifo_size_n);
-	for (i = 0; bounded_size_n != i; ++i) {
-		lockamp_fifo_pop_sample(lockamp, &sbuf->buf[head]);
-		head = (head + 1) & sbuf_cap_minus_one;
-	}
-	smp_store_release(&sbuf->head, head);
-
-	return bounded_size_n;
 }

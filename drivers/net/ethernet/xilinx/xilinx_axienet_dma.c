@@ -8,7 +8,8 @@
  * Copyright (c) 2010 - 2011 Michal Simek <monstr@monstr.eu>
  * Copyright (c) 2010 - 2011 PetaLogix
  * Copyright (c) 2010 - 2012 Xilinx, Inc.
- * Copyright (C) 2018 Xilinx, Inc. All rights reserved.
+ * Copyright (C) 2018 - 2022 Xilinx, Inc. All rights reserved.
+ * Copyright (c) 2022 Advanced Micro Devices, Inc.
  *
  * This file contains helper functions for AXI DMA TX and RX programming.
  */
@@ -30,8 +31,9 @@ void __maybe_unused axienet_bd_free(struct net_device *ndev,
 	struct axienet_local *lp = netdev_priv(ndev);
 
 	for (i = 0; i < lp->rx_bd_num; i++) {
-		dma_unmap_single(ndev->dev.parent, q->rx_bd_v[i].phys,
-				 lp->max_frm_size, DMA_FROM_DEVICE);
+		if (q->rx_bd_v[i].phys)
+			dma_unmap_single(ndev->dev.parent, q->rx_bd_v[i].phys,
+					 lp->max_frm_size, DMA_FROM_DEVICE);
 		dev_kfree_skb((struct sk_buff *)
 			      (q->rx_bd_v[i].sw_id_offset));
 	}
@@ -103,9 +105,12 @@ static int __dma_txq_init(struct net_device *ndev, struct axienet_dma_q *q)
 	/* Update the interrupt coalesce count */
 	cr = (((cr & ~XAXIDMA_COALESCE_MASK)) |
 	      ((lp->coalesce_count_tx) << XAXIDMA_COALESCE_SHIFT));
-	/* Update the delay timer count */
-	cr = (((cr & ~XAXIDMA_DELAY_MASK)) |
-	      (XAXIDMA_DFT_TX_WAITBOUND << XAXIDMA_DELAY_SHIFT));
+	/* Only set interrupt delay timer if not generating an interrupt on
+	 * the first TX packet. Otherwise leave at 0 to disable delay interrupt.
+	 */
+	if (lp->coalesce_count_tx > 1)
+		cr |= (axienet_usec_to_timer(lp, lp->coalesce_usec_tx)
+		       << XAXIDMA_DELAY_SHIFT) | XAXIDMA_IRQ_DELAY_MASK;
 	/* Enable coalesce, delay timer and error interrupts */
 	cr |= XAXIDMA_IRQ_ALL_MASK;
 	/* Write to the Tx channel control register */
@@ -169,6 +174,11 @@ static int __dma_rxq_init(struct net_device *ndev,
 						    skb->data,
 						    lp->max_frm_size,
 						    DMA_FROM_DEVICE);
+		if (unlikely(dma_mapping_error(ndev->dev.parent, q->rx_bd_v[i].phys))) {
+			q->rx_bd_v[i].phys = 0;
+			dev_err(&ndev->dev, "axidma map error\n");
+			goto out;
+		}
 		q->rx_bd_v[i].cntrl = lp->max_frm_size;
 	}
 
@@ -177,9 +187,12 @@ static int __dma_rxq_init(struct net_device *ndev,
 	/* Update the interrupt coalesce count */
 	cr = ((cr & ~XAXIDMA_COALESCE_MASK) |
 	      ((lp->coalesce_count_rx) << XAXIDMA_COALESCE_SHIFT));
-	/* Update the delay timer count */
-	cr = ((cr & ~XAXIDMA_DELAY_MASK) |
-	      (XAXIDMA_DFT_RX_WAITBOUND << XAXIDMA_DELAY_SHIFT));
+	/* Only set interrupt delay timer if not generating an interrupt on
+	 * the first RX packet. Otherwise leave at 0 to disable delay interrupt.
+	 */
+	if (lp->coalesce_count_rx > 1)
+		cr |= (axienet_usec_to_timer(lp, lp->coalesce_usec_rx)
+		       << XAXIDMA_DELAY_SHIFT) | XAXIDMA_IRQ_DELAY_MASK;
 	/* Enable coalesce, delay timer and error interrupts */
 	cr |= XAXIDMA_IRQ_ALL_MASK;
 	/* Write to the Rx channel control register */
@@ -380,26 +393,13 @@ void __maybe_unused axienet_dma_err_handler(unsigned long data)
 
 	lp->axienet_config->setoptions(ndev, lp->options &
 				       ~(XAE_OPTION_TXEN | XAE_OPTION_RXEN));
-
-	if (lp->axienet_config->mactype != XAXIENET_10G_25G) {
-		mutex_lock(&lp->mii_bus->mdio_lock);
-		axienet_mdio_disable(lp);
-		axienet_mdio_wait_until_ready(lp);
-		/* Disable the MDIO interface till Axi Ethernet Reset is
-		 * Completed. When we do an Axi Ethernet reset, it resets the
-		 * Complete core including the MDIO. So if MDIO is not disabled
-		 * When the reset process is started,
-		 * MDIO will be broken afterwards.
-		 */
-	}
-
+	/* When we do an Axi Ethernet reset, it resets the complete core
+	 * including the MDIO. MDIO must be disabled before resetting.
+	 * Hold MDIO bus lock to avoid MDIO accesses during the reset.
+	 */
+	axienet_lock_mii(lp);
 	__axienet_device_reset(q);
-
-	if (lp->axienet_config->mactype != XAXIENET_10G_25G) {
-		axienet_mdio_enable(lp);
-		axienet_mdio_wait_until_ready(lp);
-		mutex_unlock(&lp->mii_bus->mdio_lock);
-	}
+	axienet_unlock_mii(lp);
 
 	for (i = 0; i < lp->tx_bd_num; i++) {
 		cur_p = &q->tx_bd_v[i];
@@ -441,9 +441,12 @@ void __maybe_unused axienet_dma_err_handler(unsigned long data)
 	/* Update the interrupt coalesce count */
 	cr = ((cr & ~XAXIDMA_COALESCE_MASK) |
 	      (XAXIDMA_DFT_RX_THRESHOLD << XAXIDMA_COALESCE_SHIFT));
-	/* Update the delay timer count */
-	cr = ((cr & ~XAXIDMA_DELAY_MASK) |
-	      (XAXIDMA_DFT_RX_WAITBOUND << XAXIDMA_DELAY_SHIFT));
+	/* Only set interrupt delay timer if not generating an interrupt on
+	 * the first RX packet. Otherwise leave at 0 to disable delay interrupt.
+	 */
+	if (lp->coalesce_count_rx > 1)
+		cr |= (axienet_usec_to_timer(lp, lp->coalesce_usec_rx)
+		       << XAXIDMA_DELAY_SHIFT) | XAXIDMA_IRQ_DELAY_MASK;
 	/* Enable coalesce, delay timer and error interrupts */
 	cr |= XAXIDMA_IRQ_ALL_MASK;
 	/* Finally write to the Rx channel control register */
@@ -454,9 +457,12 @@ void __maybe_unused axienet_dma_err_handler(unsigned long data)
 	/* Update the interrupt coalesce count */
 	cr = (((cr & ~XAXIDMA_COALESCE_MASK)) |
 	      (XAXIDMA_DFT_TX_THRESHOLD << XAXIDMA_COALESCE_SHIFT));
-	/* Update the delay timer count */
-	cr = (((cr & ~XAXIDMA_DELAY_MASK)) |
-	      (XAXIDMA_DFT_TX_WAITBOUND << XAXIDMA_DELAY_SHIFT));
+	/* Only set interrupt delay timer if not generating an interrupt on
+	 * the first TX packet. Otherwise leave at 0 to disable delay interrupt.
+	 */
+	if (lp->coalesce_count_tx > 1)
+		cr |= (axienet_usec_to_timer(lp, lp->coalesce_usec_tx)
+		       << XAXIDMA_DELAY_SHIFT) | XAXIDMA_IRQ_DELAY_MASK;
 	/* Enable coalesce, delay timer and error interrupts */
 	cr |= XAXIDMA_IRQ_ALL_MASK;
 	/* Finally write to the Tx channel control register */

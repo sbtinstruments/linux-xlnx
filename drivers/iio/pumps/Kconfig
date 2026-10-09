@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# Pump drivers
+#
+
+menu "Pump drivers"
+
+config SPM
+	tristate "The Lee Company Smart Pump Module"
+	depends on I2C
+	help
+	  Say Y here to build I2C interface support for the following 
+	  disc pump smart module.
+
+endmenu

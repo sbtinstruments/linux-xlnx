@@ -95,18 +95,15 @@ struct device;
 int devm_gpio_request(struct device *dev, unsigned gpio, const char *label);
 int devm_gpio_request_one(struct device *dev, unsigned gpio,
 			  unsigned long flags, const char *label);
-void devm_gpio_free(struct device *dev, unsigned int gpio);
 
 #else /* ! CONFIG_GPIOLIB */
 
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/bug.h>
-#include <linux/pinctrl/pinctrl.h>
 
 struct device;
 struct gpio_chip;
-struct pinctrl_dev;
 
 static inline bool gpio_is_valid(int number)
 {
@@ -240,11 +237,6 @@ static inline int devm_gpio_request_one(struct device *dev, unsigned gpio,
 {
 	WARN_ON(1);
 	return -EINVAL;
-}
-
-static inline void devm_gpio_free(struct device *dev, unsigned int gpio)
-{
-	WARN_ON(1);
 }
 
 #endif /* ! CONFIG_GPIOLIB */

@@ -11,6 +11,8 @@
 OUTPUT_ARCH(microblaze)
 ENTRY(microblaze_start)
 
+#define RO_EXCEPTION_TABLE_ALIGN	16
+
 #include <asm/cache.h>
 #include <asm/page.h>
 #include <asm-generic/vmlinux.lds.h>
@@ -43,7 +45,7 @@ SECTIONS {
 		_etext = . ;
 	}
 
-	. = ALIGN (4) ;
+	. = ALIGN (8) ;
 	__fdt_blob : AT(ADDR(__fdt_blob) - LOAD_OFFSET) {
 		_fdt_start = . ;		/* place for fdt blob */
 		*(__fdt_blob) ;			/* Any link-placed DTB */
@@ -52,9 +54,7 @@ SECTIONS {
 	}
 
 	. = ALIGN(16);
-	RODATA
-	EXCEPTION_TABLE(16)
-	NOTES
+	RO_DATA(4096)
 
 	/*
 	 * sdata2 section can go anywhere, but must be word aligned
@@ -71,7 +71,7 @@ SECTIONS {
 	}
 
 	_sdata = . ;
-	RW_DATA_SECTION(32, PAGE_SIZE, THREAD_SIZE)
+	RW_DATA(32, PAGE_SIZE, THREAD_SIZE)
 	_edata = . ;
 
 	/* Under the microblaze ABI, .sdata and .sbss must be contiguous */

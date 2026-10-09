@@ -12,11 +12,12 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/sched/clock.h>
+#include <linux/spi/spi.h>
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_mipi_dbi.h>
 #include <drm/drm_modeset_helper.h>
@@ -240,16 +241,14 @@ static const struct drm_simple_display_pipe_funcs ili9488_pipe_funcs = {
 	.enable = ili9488_pipe_enable,
 	.disable = mipi_dbi_pipe_disable,
 	.update = mipi_dbi_pipe_update,
-	.prepare_fb = drm_gem_fb_simple_display_pipe_prepare_fb,
 };
 
-DEFINE_DRM_GEM_CMA_FOPS(ili9488_fops);
+DEFINE_DRM_GEM_DMA_FOPS(ili9488_fops);
 
-static struct drm_driver ili9488_driver = {
+static const struct drm_driver ili9488_driver = {
 	.driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
 	.fops			= &ili9488_fops,
-	.release		= mipi_dbi_release,
-	DRM_GEM_CMA_VMAP_DRIVER_OPS,
+	DRM_GEM_DMA_DRIVER_OPS_VMAP,
 	.name			= "ili9488",
 	.desc			= "Ilitek ILI9488",
 	.date			= "20190716",
@@ -277,17 +276,14 @@ static int ili9488_probe(struct platform_device *pdev)
 	int rotation = 0;
 	int ret;
 
-	dbidev = devm_kzalloc(dev, sizeof(*dbidev), GFP_KERNEL);
-	if (!dbidev) {
-		return -ENOMEM;
+	dbidev = devm_drm_dev_alloc(dev, &ili9488_driver,
+	                            struct mipi_dbi_dev, drm);
+	if (IS_ERR(dbidev)) {
+		return PTR_ERR(dbidev);
 	}
 
 	dbi = &dbidev->dbi;
 	drm = &dbidev->drm;
-	ret = devm_drm_dev_init(dev, drm, &ili9488_driver);
-	if (ret) {
-		return ret;
-	}
 
 	drm_mode_config_init(drm);
 

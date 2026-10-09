@@ -8,25 +8,31 @@
  *       : Jeffrey Mouroux <jmouroux@xilinx.com>
  */
 
-#include <drm/drmP.h>
+#include <drm/drm_vblank.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_atomic_uapi.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_fb_dma_helper.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_gem_dma_helper.h>
+#include <drm/drm_framebuffer.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/component.h>
 #include <linux/dma/xilinx_frmbuf.h>
+#include <linux/of_reserved_mem.h>
 #include <linux/gpio/consumer.h>
 #include <linux/of.h>
 #include <linux/of_dma.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
+#include <linux/platform_device.h>
 #include <linux/dmaengine.h>
+#include <linux/dma-mapping.h>
 #include <video/videomode.h>
+#include <linux/media-bus-format.h>
 #include "xlnx_bridge.h"
 #include "xlnx_crtc.h"
 #include "xlnx_drv.h"
@@ -238,6 +244,10 @@ static const u32 color_table[] = {
 	DRM_FORMAT_XV20,
 };
 
+static bool xlnx_mixer_primary_enable = true;
+module_param_named(mixer_primary_enable, xlnx_mixer_primary_enable, bool, 0600);
+MODULE_PARM_DESC(mixer_primary_enable, "Enable mixer primary plane (default: 1)");
+
 /*********************** Inline Functions/Macros *****************************/
 #define to_mixer_hw(p) (&((p)->mixer->mixer_hw))
 #define to_xlnx_crtc(x)	container_of(x, struct xlnx_crtc, crtc)
@@ -431,6 +441,7 @@ struct xlnx_mix_hw {
  * @dpms: mixer drm state
  * @event: vblank pending event
  * @vtc_bridge: vtc_bridge structure
+ * @disp_bridge: disp_bridge structure
  *
  * Contains pointers to logical constructions such as the DRM plane manager as
  * well as pointers to distinquish the mixer layer serving as the DRM "primary"
@@ -460,6 +471,7 @@ struct xlnx_mix {
 	int dpms;
 	struct drm_pending_vblank_event *event;
 	struct xlnx_bridge *vtc_bridge;
+	struct xlnx_bridge *disp_bridge;
 };
 
 /**
@@ -512,6 +524,50 @@ static inline void reg_writeq(void __iomem *base, int offset, u64 val)
 static inline u32 reg_readl(void __iomem *base, int offset)
 {
 	return readl(base + offset);
+}
+
+static u32 xlnx_mix_get_bus_fmt(struct xlnx_mix *mixer)
+{
+	struct xlnx_mix_layer_data *master;
+
+	master = &mixer->mixer_hw.layer_data[XVMIX_MASTER_LAYER_IDX];
+
+	switch (master->hw_config.vid_fmt) {
+	case DRM_FORMAT_BGR888:
+	case DRM_FORMAT_RGB888:
+	case DRM_FORMAT_XRGB8888:
+	case DRM_FORMAT_RGBA8888:
+	case DRM_FORMAT_ABGR8888:
+	case DRM_FORMAT_ARGB8888:
+	case DRM_FORMAT_XBGR8888:
+		return MEDIA_BUS_FMT_RBG888_1X24;
+	case DRM_FORMAT_XBGR2101010:
+		return MEDIA_BUS_FMT_RBG101010_1X30;
+	case DRM_FORMAT_YUYV:
+	case DRM_FORMAT_UYVY:
+	case DRM_FORMAT_NV16:
+		return MEDIA_BUS_FMT_UYVY8_1X16;
+	case DRM_FORMAT_AYUV:
+	case DRM_FORMAT_VUY888:
+	case DRM_FORMAT_XVUY8888:
+		return MEDIA_BUS_FMT_VUY8_1X24;
+	case DRM_FORMAT_NV12:
+		return MEDIA_BUS_FMT_VYYUYY8_1X24;
+	case DRM_FORMAT_Y8:
+		return MEDIA_BUS_FMT_Y8_1X8;
+	case DRM_FORMAT_Y10:
+		return MEDIA_BUS_FMT_Y10_1X10;
+	case DRM_FORMAT_XVUY2101010:
+		return MEDIA_BUS_FMT_VUY10_1X30;
+	case DRM_FORMAT_XV15:
+		return MEDIA_BUS_FMT_VYYUYY10_4X20;
+	case DRM_FORMAT_XV20:
+		return MEDIA_BUS_FMT_UYVY10_1X20;
+	default:
+		DRM_DEBUG_KMS("invalid layer format: %d\n",
+			      master->hw_config.vid_fmt);
+		return 0;
+	}
 }
 
 /**
@@ -677,7 +733,7 @@ static int xlnx_mix_set_active_area(struct xlnx_mix_hw *mixer,
 
 	if (hactive > ld->hw_config.max_width ||
 	    vactive > ld->hw_config.max_height) {
-		DRM_ERROR("Invalid layer dimention\n");
+		DRM_ERROR("Invalid layer dimension\n");
 		return -EINVAL;
 	}
 	/* set resolution */
@@ -741,6 +797,13 @@ static void xlnx_mix_layer_enable(struct xlnx_mix_hw *mixer,
 {
 	struct xlnx_mix_layer_data *layer_data;
 	u32 curr_state;
+	struct xlnx_mix *mix;
+
+	mix = container_of(mixer, struct xlnx_mix, mixer_hw);
+	if (mix->drm_primary_layer->mixer_layer->id == id) {
+		if (!xlnx_mixer_primary_enable)
+			return;
+	}
 
 	/* Ensure layer is marked as 'active' by application before
 	 * turning on in hardware.  In some cases, layer register data
@@ -1689,7 +1752,7 @@ static int xlnx_mix_logo_load(struct xlnx_mix_hw *mixer, u32 logo_w, u32 logo_h,
 }
 
 static int xlnx_mix_update_logo_img(struct xlnx_mix_plane *plane,
-				    struct drm_gem_cma_object *buffer,
+				    struct drm_gem_dma_object *buffer,
 				     u32 src_w, u32 src_h)
 {
 	struct xlnx_mix_layer_data *logo_layer = plane->mixer_layer;
@@ -1796,7 +1859,7 @@ static int xlnx_mix_set_plane(struct xlnx_mix_plane *plane,
 {
 	struct xlnx_mix_hw *mixer_hw;
 	struct xlnx_mix *mixer;
-	struct drm_gem_cma_object *luma_buffer;
+	struct drm_gem_dma_object *luma_buffer;
 	u32 luma_stride = fb->pitches[0];
 	dma_addr_t luma_addr, chroma_addr = 0;
 	u32 active_area_width;
@@ -1813,15 +1876,15 @@ static int xlnx_mix_set_plane(struct xlnx_mix_plane *plane,
 	active_area_height =
 		mixer->drm_primary_layer->mixer_layer->layer_regs.height;
 	/* compute memory data */
-	luma_buffer = drm_fb_cma_get_gem_obj(fb, 0);
-	luma_addr = drm_fb_cma_get_gem_addr(fb, plane->base.state, 0);
+	luma_buffer = drm_fb_dma_get_gem_obj(fb, 0);
+	luma_addr = drm_fb_dma_get_gem_addr(fb, plane->base.state, 0);
 	if (!luma_addr) {
 		DRM_ERROR("%s failed to get luma paddr\n", __func__);
 		return -EINVAL;
 	}
 
 	if (info->num_planes > 1) {
-		chroma_addr = drm_fb_cma_get_gem_addr(fb, plane->base.state, 1);
+		chroma_addr = drm_fb_dma_get_gem_addr(fb, plane->base.state, 1);
 		if (!chroma_addr) {
 			DRM_ERROR("failed to get chroma paddr\n");
 			return -EINVAL;
@@ -1892,7 +1955,7 @@ static int xlnx_mix_plane_mode_set(struct drm_plane *base_plane,
 		unsigned int width = src_w / (i ? info->hsub : 1);
 		unsigned int height = src_h / (i ? info->vsub : 1);
 
-		luma_paddr = drm_fb_cma_get_gem_addr(fb, base_plane->state, i);
+		luma_paddr = drm_fb_dma_get_gem_addr(fb, base_plane->state, i);
 		if (!luma_paddr) {
 			DRM_ERROR("%s failed to get luma paddr\n", __func__);
 			return -EINVAL;
@@ -1959,12 +2022,15 @@ static void xlnx_mix_plane_cleanup_fb(struct drm_plane *plane,
 }
 
 static int xlnx_mix_plane_atomic_check(struct drm_plane *plane,
-				       struct drm_plane_state *state)
+				       struct drm_atomic_state *statea)
 {
 	int scale;
 	struct xlnx_mix_plane *mix_plane = to_xlnx_plane(plane);
 	struct xlnx_mix_hw *mixer_hw = to_mixer_hw(mix_plane);
 	struct xlnx_mix *mix;
+	int scale_factor[3] = {1, 2, 4};
+	struct drm_plane_state *state = drm_atomic_get_new_plane_state(statea,
+								       plane);
 
 	/* No check required for the drm_primary_plane */
 	mix = container_of(mixer_hw, struct xlnx_mix, mixer_hw);
@@ -1973,6 +2039,13 @@ static int xlnx_mix_plane_atomic_check(struct drm_plane *plane,
 
 	scale = xlnx_mix_get_layer_scaling(mixer_hw,
 					   mix_plane->mixer_layer->id);
+
+	if (state->fb && (((state->src_w >> 16) * scale_factor[scale] != state->crtc_w) ||
+			  ((state->src_h >> 16) * scale_factor[scale] != state->crtc_h))) {
+		DRM_DEBUG_KMS("Not possible to scale to the desired dimensions\n");
+		return -EINVAL;
+	}
+
 	if (is_window_valid(mixer_hw, state->crtc_x, state->crtc_y,
 			    state->src_w >> 16, state->src_h >> 16, scale))
 		return 0;
@@ -1981,9 +2054,10 @@ static int xlnx_mix_plane_atomic_check(struct drm_plane *plane,
 }
 
 static void xlnx_mix_plane_atomic_update(struct drm_plane *plane,
-					 struct drm_plane_state *old_state)
+					 struct drm_atomic_state *state)
 {
 	int ret;
+	struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state, plane);
 
 	if (!plane->state->crtc || !plane->state->fb)
 		return;
@@ -2012,23 +2086,23 @@ static void xlnx_mix_plane_atomic_update(struct drm_plane *plane,
 }
 
 static void xlnx_mix_plane_atomic_disable(struct drm_plane *plane,
-					  struct drm_plane_state *old_state)
+					  struct drm_atomic_state *state)
 {
 	xlnx_mix_plane_dpms(plane, DRM_MODE_DPMS_OFF);
 }
 
 static int xlnx_mix_plane_atomic_async_check(struct drm_plane *plane,
-					     struct drm_plane_state *state)
+					     struct drm_atomic_state *state)
 {
 	return 0;
 }
 
 static void
 xlnx_mix_plane_atomic_async_update(struct drm_plane *plane,
-				   struct drm_plane_state *new_state)
+				   struct drm_atomic_state *state)
 {
-	struct drm_plane_state *old_state =
-		drm_atomic_get_old_plane_state(new_state->state, plane);
+	struct drm_plane_state *new_state =
+		drm_atomic_get_new_plane_state(state, plane);
 
 	/* Update the current state with new configurations */
 	swap(plane->state->fb, new_state->fb);
@@ -2043,7 +2117,7 @@ xlnx_mix_plane_atomic_async_update(struct drm_plane *plane,
 	plane->state->src_h = new_state->src_h;
 	plane->state->state = new_state->state;
 
-	xlnx_mix_plane_atomic_update(plane, old_state);
+	xlnx_mix_plane_atomic_update(plane, state);
 }
 
 static const struct drm_plane_helper_funcs xlnx_mix_plane_helper_funcs = {
@@ -2141,7 +2215,7 @@ static int xlnx_mix_parse_dt_bg_video_fmt(struct device_node *node,
 		DRM_ERROR("No xlnx,vformat value for layer 0 in dts\n");
 		return -EINVAL;
 	}
-	strcpy((char *)&layer->hw_config.vid_fmt, vformat);
+	strncpy((char *)&layer->hw_config.vid_fmt, vformat, 4);
 	layer->hw_config.is_streaming =
 		of_property_read_bool(layer_node, "xlnx,layer-streaming");
 	if (of_property_read_u32(node, "xlnx,bpc", &mixer_hw->bg_layer_bpc)) {
@@ -2232,11 +2306,31 @@ static int xlnx_mix_parse_dt_logo_data(struct device_node *node,
 	return 0;
 }
 
+static int xlnx_mix_dt_dp_bridge(struct device *dev, struct xlnx_mix *mixer)
+{
+	struct device_node *node, *disp_node;
+
+	node = dev->of_node;
+	/* Disp Bridge support */
+	disp_node = of_parse_phandle(node, "xlnx,disp-bridge", 0);
+	if (disp_node) {
+		mixer->disp_bridge = of_xlnx_bridge_get(disp_node);
+		if (!mixer->disp_bridge) {
+			dev_info(dev, "Didn't get disp bridge instance\n");
+			return -1;
+		}
+	} else {
+		dev_info(dev, "disp bridge property not present\n");
+		return -1;
+	}
+	return 0;
+}
+
 static int xlnx_mix_dt_parse(struct device *dev, struct xlnx_mix *mixer)
 {
 	struct xlnx_mix_plane *planes;
 	struct xlnx_mix_hw *mixer_hw;
-	struct device_node *node, *vtc_node;
+	struct device_node *node, *vtc_node, *port;
 	struct xlnx_mix_layer_data *l_data;
 	struct resource	res;
 	int ret, l_cnt, i;
@@ -2347,6 +2441,14 @@ static int xlnx_mix_dt_parse(struct device *dev, struct xlnx_mix *mixer)
 		ret = xlnx_mix_parse_dt_logo_data(node, mixer_hw);
 		return ret;
 	}
+
+	/* Fill out crtc port OF node */
+	for_each_child_of_node(node, port) {
+		if (!port->name || of_node_cmp(port->name, "port"))
+			continue;
+		mixer->crtc.crtc.port = port;
+		break;
+	}
 	return 0;
 }
 
@@ -2390,7 +2492,7 @@ static int xlnx_mix_of_init_layer(struct device *dev, struct device_node *node,
 		return ret;
 	}
 
-	strcpy((char *)&layer->hw_config.vid_fmt, vformat);
+	strncpy((char *)&layer->hw_config.vid_fmt, vformat, 4);
 	layer->hw_config.can_scale =
 		    of_property_read_bool(layer_node, "xlnx,layer-scale");
 	if (layer->hw_config.can_scale) {
@@ -2617,6 +2719,8 @@ static void xlnx_mix_crtc_dpms(struct drm_crtc *base_crtc, int dpms)
 	int ret;
 	struct videomode vm;
 	struct drm_display_mode *mode = &base_crtc->mode;
+	struct drm_display_mode *adjusted_mode =
+					&base_crtc->state->adjusted_mode;
 
 	DRM_DEBUG_KMS("dpms: %d\n", dpms);
 	if (mixer->dpms == dpms)
@@ -2638,6 +2742,16 @@ static void xlnx_mix_crtc_dpms(struct drm_crtc *base_crtc, int dpms)
 			drm_display_mode_to_videomode(mode, &vm);
 			xlnx_bridge_set_timing(mixer->vtc_bridge, &vm);
 			xlnx_bridge_enable(mixer->vtc_bridge);
+		}
+
+		if (mixer->disp_bridge) {
+			drm_display_mode_to_videomode(adjusted_mode, &vm);
+			xlnx_bridge_set_input(mixer->disp_bridge,
+					      adjusted_mode->hdisplay,
+					      adjusted_mode->vdisplay,
+					      xlnx_mix_get_bus_fmt(mixer));
+			xlnx_bridge_set_timing(mixer->disp_bridge, &vm);
+			xlnx_bridge_enable(mixer->disp_bridge);
 		}
 
 		xlnx_mix_dpms(mixer, dpms);
@@ -2754,7 +2868,7 @@ static struct drm_crtc_funcs xlnx_mix_crtc_funcs = {
 
 static void
 xlnx_mix_crtc_atomic_enable(struct drm_crtc *crtc,
-			    struct drm_crtc_state *old_crtc_state)
+			    struct drm_atomic_state *state)
 {
 	struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
 	int vrefresh;
@@ -2782,7 +2896,7 @@ static void xlnx_mix_clear_event(struct drm_crtc *crtc)
 
 static void
 xlnx_mix_crtc_atomic_disable(struct drm_crtc *crtc,
-			     struct drm_crtc_state *old_crtc_state)
+			     struct drm_atomic_state *state)
 {
 	xlnx_mix_crtc_dpms(crtc, DRM_MODE_DPMS_OFF);
 	xlnx_mix_clear_event(crtc);
@@ -2794,14 +2908,14 @@ static void xlnx_mix_crtc_mode_set_nofb(struct drm_crtc *crtc)
 }
 
 static int xlnx_mix_crtc_atomic_check(struct drm_crtc *crtc,
-				      struct drm_crtc_state *state)
+				      struct drm_atomic_state *state)
 {
-	return drm_atomic_add_affected_planes(state->state, crtc);
+	return drm_atomic_add_affected_planes(state, crtc);
 }
 
 static void
 xlnx_mix_crtc_atomic_begin(struct drm_crtc *crtc,
-			   struct drm_crtc_state *old_crtc_state)
+			   struct drm_atomic_state *state)
 {
 	drm_crtc_vblank_on(crtc);
 	/* Don't rely on vblank when disabling crtc */
@@ -2871,6 +2985,8 @@ static int xlnx_mix_crtc_create(struct xlnx_mix *mixer)
 	crtc->get_cursor_height = &xlnx_mix_crtc_get_max_cursor_height;
 	crtc->get_cursor_width = &xlnx_mix_crtc_get_max_cursor_width;
 	xlnx_crtc_register(mixer->drm, crtc);
+	dev_info(mixer->drm->dev,
+		 "Registered mixer CRTC with id: %d\n", crtc->crtc.base.id);
 
 	return 0;
 
@@ -2933,6 +3049,8 @@ static int xlnx_mix_bind(struct device *dev, struct device *master,
 	struct drm_device *drm = data;
 	u32 ret;
 
+	xlnx_mix_dt_dp_bridge(dev, mixer);
+
 	mixer->drm = drm;
 	ret = xlnx_mix_plane_create(dev, mixer);
 	if (ret)
@@ -2949,6 +3067,14 @@ static void xlnx_mix_unbind(struct device *dev, struct device *master,
 			    void *data)
 {
 	struct xlnx_mix *mixer = dev_get_drvdata(dev);
+	int i, j;
+
+	for (i = 0; i < mixer->num_planes; i++) {
+		for (j = 0; j < XVMIX_MAX_NUM_SUB_PLANES; j++) {
+			if (mixer->planes[i].dma[j].chan)
+				dma_release_channel(mixer->planes[i].dma[j].chan);
+		}
+	}
 
 	dev_set_drvdata(dev, NULL);
 	xlnx_mix_intrpt_disable(&mixer->mixer_hw);
@@ -2968,6 +3094,16 @@ static int xlnx_mix_probe(struct platform_device *pdev)
 	mixer = devm_kzalloc(&pdev->dev, sizeof(*mixer), GFP_KERNEL);
 	if (!mixer)
 		return -ENOMEM;
+
+	ret = of_reserved_mem_device_init(&pdev->dev);
+	if (ret)
+		dev_dbg(&pdev->dev, "of_reserved_mem_device_init: %d\n", ret);
+
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (ret) {
+		dev_err(&pdev->dev, "dma_set_coherent_mask: %d\n", ret);
+		return ret;
+	}
 
 	/* Sub-driver will access mixer from drvdata */
 	platform_set_drvdata(pdev, mixer);
@@ -3003,6 +3139,10 @@ static int xlnx_mix_remove(struct platform_device *pdev)
 
 	if (mixer->vtc_bridge)
 		of_xlnx_bridge_put(mixer->vtc_bridge);
+	if (mixer->disp_bridge) {
+		of_xlnx_bridge_put(mixer->disp_bridge);
+		xlnx_mix_crtc_atomic_disable(&mixer->crtc.crtc, NULL);
+	}
 	xlnx_drm_pipeline_exit(mixer->master);
 	component_del(&pdev->dev, &xlnx_mix_component_ops);
 	return 0;

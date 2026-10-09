@@ -8,31 +8,37 @@
 #include <linux/iio/consumer.h>
 
 #include "hw.h"
+#include "pm.h"
 
 static int lockamp_pm_suspend(struct device *dev)
 {
 	struct lockamp *lockamp = dev_get_drvdata(dev);
-	/* The "fifo_to_sbuf" kthread will wait for the mutex indefinitely.
-	 * This way, the hardware is not used during the suspend.
-	 */
-	mutex_lock(&lockamp->signal_buf_m);
+
+	/* The DMA would keep writing to RAM while the system sleeps */
+	if (lockamp->stream.running)
+		return -EBUSY;
 	dev_dbg(dev, "Success\n");
 	return 0;
 }
 
-static int lockamp_pm_resume(struct device *dev)
+/* Hold the amp supply on, or let it go. Another consumer may still hold
+ * it on, so regulator_is_enabled() says nothing about this driver.
+ */
+int lockamp_amp_supply_set(struct lockamp *lockamp, bool on)
 {
-	struct lockamp *lockamp = dev_get_drvdata(dev);
-	/* Wait for a short while for the HW to power up. We determine the
-	 * 'short while' as follows:
-	 *   1) The kernel crashes when we use 1 ms
-	 *   2) Seemingly works (couldn't get it not to work) when we use 5 ms
-	 *   3) We choose 10 ms to be on the safe side
-	 */
-	msleep(10);
-	mutex_unlock(&lockamp->signal_buf_m);
-	dev_dbg(dev, "Success\n");
-	return 0;
+	int ret = 0;
+
+	mutex_lock(&lockamp->amp_supply_m);
+	if (on != lockamp->amp_supply_on) {
+		if (on)
+			ret = regulator_enable(lockamp->amp_supply);
+		else
+			ret = regulator_disable(lockamp->amp_supply);
+		if (ret == 0)
+			lockamp->amp_supply_on = on;
+	}
+	mutex_unlock(&lockamp->amp_supply_m);
+	return ret;
 }
 
 static int lockamp_powerdown_iio_chan(struct iio_channel *chan, bool powerdown)
@@ -73,17 +79,10 @@ static int lockamp_pm_runtime_suspend(struct device *dev)
 		dev_err(dev, "Failed to disable the AD/DA converters: %d\n", ret);
 		return ret;
 	}
-	/* We have exclusive ownership of the regulator, so the regulator is
-	 * enabled iff we enabled it in this driver.
-	 *
-	 * The regulator is eanbled and we are not forcing it off... */
-	if (regulator_is_enabled(lockamp->amp_supply) && !lockamp->amp_supply_force_off) {
-		/* ...so we disable the regulator right away. */
-		ret = regulator_disable(lockamp->amp_supply);
-		if (ret < 0) {
-			dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
-			return ret;
-		}
+	ret = lockamp_amp_supply_set(lockamp, false);
+	if (ret < 0) {
+		dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
+		return ret;
 	}
 	dev_dbg(dev, "Success\n");
 	return 0;
@@ -119,13 +118,8 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 			return ret;
 		}
 	}
-	/* We have exclusive ownership of the regulator, so the regulator is
-	 * enabled iff we enabled it in this driver.
-	 *
-	 * The regulator is disabled and we are not forcing it off... */
-	if (!regulator_is_enabled(lockamp->amp_supply) && !lockamp->amp_supply_force_off) {
-		/* ...so we enable the regulator right away. */
-		ret = regulator_enable(lockamp->amp_supply);
+	if (!lockamp->amp_supply_force_off) {
+		ret = lockamp_amp_supply_set(lockamp, true);
 		if (ret < 0) {
 			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
 			return ret;
@@ -136,8 +130,7 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 }
 
 struct dev_pm_ops lockamp_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(lockamp_pm_suspend,
-	                        lockamp_pm_resume)
+	SET_SYSTEM_SLEEP_PM_OPS(lockamp_pm_suspend, NULL)
 	SET_RUNTIME_PM_OPS(lockamp_pm_runtime_suspend,
 	                   lockamp_pm_runtime_resume,
 	                   NULL)

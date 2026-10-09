@@ -15,6 +15,7 @@
 #include <linux/of_graph.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
+#include <linux/of_reserved_mem.h>
 
 #include <media/v4l2-async.h>
 #include <media/v4l2-common.h>
@@ -316,7 +317,7 @@ static bool xvip_graph_entity_start_stop(struct xvip_composite_device *xdev,
 			continue;
 
 		/* skipping not connected pads */
-		pad = media_entity_remote_pad(&entity->entity->pads[i]);
+		pad = media_pad_remote_pad_first(&entity->entity->pads[i]);
 		if (!pad || !pad->entity)
 			continue;
 
@@ -381,7 +382,7 @@ int xvip_graph_pipeline_start_stop(struct xvip_composite_device *xdev,
 
 		entity = to_xvip_entity(asd);
 		/* skip an entity not belongng to the given pipe */
-		if (&pipe->pipe != entity->entity->pipe)
+		if (&pipe->pipe != media_entity_pipeline(entity->entity))
 			continue;
 
 		state = xvip_graph_entity_start_stop(xdev, entity, on);
@@ -568,7 +569,7 @@ static int xvip_graph_parse_one(struct xvip_composite_device *xdev,
 	dev_dbg(xdev->dev, "parsing node %p\n", fwnode);
 
 	while (1) {
-		struct v4l2_async_subdev *asd;
+		struct xvip_graph_entity *xge;
 
 		ep = fwnode_graph_get_next_endpoint(fwnode, ep);
 		if (ep == NULL)
@@ -591,12 +592,11 @@ static int xvip_graph_parse_one(struct xvip_composite_device *xdev,
 			continue;
 		}
 
-		asd = v4l2_async_notifier_add_fwnode_subdev(
-			&xdev->notifier, remote,
-			sizeof(struct xvip_graph_entity));
+		xge = v4l2_async_nf_add_fwnode(&xdev->notifier, remote,
+					       struct xvip_graph_entity);
 		fwnode_handle_put(remote);
-		if (IS_ERR(asd)) {
-			ret = PTR_ERR(asd);
+		if (IS_ERR(xge)) {
+			ret = PTR_ERR(xge);
 			goto err_notifier_cleanup;
 		}
 	}
@@ -604,7 +604,7 @@ static int xvip_graph_parse_one(struct xvip_composite_device *xdev,
 	return 0;
 
 err_notifier_cleanup:
-	v4l2_async_notifier_cleanup(&xdev->notifier);
+	v4l2_async_nf_cleanup(&xdev->notifier);
 	fwnode_handle_put(ep);
 	return ret;
 }
@@ -629,7 +629,7 @@ static int xvip_graph_parse(struct xvip_composite_device *xdev)
 		entity = to_xvip_entity(asd);
 		ret = xvip_graph_parse_one(xdev, entity->asd.match.fwnode);
 		if (ret < 0) {
-			v4l2_async_notifier_cleanup(&xdev->notifier);
+			v4l2_async_nf_cleanup(&xdev->notifier);
 			break;
 		}
 	}
@@ -689,7 +689,7 @@ static int xvip_graph_dma_init(struct xvip_composite_device *xdev)
 {
 	struct device_node *ports;
 	struct device_node *port;
-	int ret;
+	int ret = 0;
 
 	ports = of_get_child_by_name(xdev->dev->of_node, "ports");
 	if (ports == NULL) {
@@ -699,13 +699,14 @@ static int xvip_graph_dma_init(struct xvip_composite_device *xdev)
 
 	for_each_child_of_node(ports, port) {
 		ret = xvip_graph_dma_init_one(xdev, port);
-		if (ret < 0) {
+		if (ret) {
 			of_node_put(port);
-			return ret;
+			break;
 		}
 	}
 
-	return 0;
+	of_node_put(ports);
+	return ret;
 }
 
 static void xvip_graph_cleanup(struct xvip_composite_device *xdev)
@@ -713,8 +714,8 @@ static void xvip_graph_cleanup(struct xvip_composite_device *xdev)
 	struct xvip_dma *dmap;
 	struct xvip_dma *dma;
 
-	v4l2_async_notifier_unregister(&xdev->notifier);
-	v4l2_async_notifier_cleanup(&xdev->notifier);
+	v4l2_async_nf_unregister(&xdev->notifier);
+	v4l2_async_nf_cleanup(&xdev->notifier);
 
 	list_for_each_entry_safe(dma, dmap, &xdev->dmas, list) {
 		xvip_dma_cleanup(dma);
@@ -742,13 +743,14 @@ static int xvip_graph_init(struct xvip_composite_device *xdev)
 
 	if (list_empty(&xdev->notifier.asd_list)) {
 		dev_err(xdev->dev, "no subdev found in graph\n");
+		ret = -ENOENT;
 		goto done;
 	}
 
 	/* Register the subdevices notifier. */
 	xdev->notifier.ops = &xvip_graph_notify_ops;
 
-	ret = v4l2_async_notifier_register(&xdev->v4l2_dev, &xdev->notifier);
+	ret = v4l2_async_nf_register(&xdev->v4l2_dev, &xdev->notifier);
 	if (ret < 0) {
 		dev_err(xdev->dev, "notifier registration failed\n");
 		goto done;
@@ -813,7 +815,7 @@ static int xvip_composite_probe(struct platform_device *pdev)
 	xdev->dev = &pdev->dev;
 	mutex_init(&xdev->lock);
 	INIT_LIST_HEAD(&xdev->dmas);
-	v4l2_async_notifier_init(&xdev->notifier);
+	v4l2_async_nf_init(&xdev->notifier);
 
 	ret = xvip_composite_v4l2_init(xdev);
 	if (ret < 0)
@@ -822,6 +824,18 @@ static int xvip_composite_probe(struct platform_device *pdev)
 	ret = xvip_graph_init(xdev);
 	if (ret < 0)
 		goto error;
+
+	xdev->atomic_streamon = of_property_read_bool(xdev->dev->of_node, "xlnx,atomic_streamon");
+
+	ret = of_reserved_mem_device_init(&pdev->dev);
+	if (ret)
+		dev_dbg(&pdev->dev, "of_reserved_mem_device_init: %d\n", ret);
+
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (ret) {
+		dev_err(&pdev->dev, "dma_set_mask_and_coherent: %d\n", ret);
+		goto error;
+	}
 
 	platform_set_drvdata(pdev, xdev);
 

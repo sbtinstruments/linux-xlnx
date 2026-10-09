@@ -118,7 +118,7 @@ static const struct platform_suspend_ops zynq_pm_ops = {
 static void __iomem *zynq_pm_remap_ocm(void)
 {
 	struct device_node *np;
-	const char *comp = "xlnx,zynq-ocmc-1.0";
+	const char *comp = "mmio-sram";
 	void __iomem *base = NULL;
 
 	np = of_find_compatible_node(NULL, NULL, comp);
@@ -133,7 +133,7 @@ static void __iomem *zynq_pm_remap_ocm(void)
 		dev = &(of_find_device_by_node(np)->dev);
 
 		/* Get OCM pool from device tree or platform data */
-		pool = gen_pool_get(dev, NULL);
+		pool = gen_pool_get(dev, "ocm-sram");
 		if (!pool) {
 			pr_warn("%s: OCM pool is not available\n", __func__);
 			return NULL;

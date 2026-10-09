@@ -41,6 +41,9 @@ struct xintc_irq_chip {
 	struct			irq_chip *intc_dev;
 	u32				nr_irq;
 	u32				sw_irq;
+#ifdef CONFIG_IRQCHIP_XILINX_INTC_MODULE_SUPPORT_EXPERIMENTAL
+	int				irq;
+#endif
 };
 
 static DEFINE_STATIC_KEY_FALSE(xintc_is_be);
@@ -129,19 +132,6 @@ static void intc_mask_ack(struct irq_data *d)
 	xintc_write(local_intc, IAR, mask);
 }
 
-static unsigned int xintc_get_irq_local(struct xintc_irq_chip *local_intc)
-{
-	int hwirq, irq = -1;
-
-	hwirq = xintc_read(local_intc, IVR);
-	if (hwirq != -1U)
-		irq = irq_find_mapping(local_intc->domain, hwirq);
-
-	pr_debug("irq-xilinx: hwirq=%d, irq=%d\n", hwirq, irq);
-
-	return irq;
-}
-
 static int xintc_map(struct irq_domain *d, unsigned int irq, irq_hw_number_t hw)
 {
 	struct xintc_irq_chip *local_intc = d->host_data;
@@ -181,7 +171,7 @@ static int xintc_map(struct irq_domain *d, unsigned int irq, irq_hw_number_t hw)
 	/*
 	 * Setup all IRQs to be per CPU because servicing it by different
 	 * cpu is not implemented yet. And for uniprocessor system this flag
-	 * is nop all time time.
+	 * is nop all time.
 	 */
 	irq_set_status_flags(irq, IRQ_PER_CPU);
 
@@ -228,16 +218,18 @@ static void xil_intc_initial_setup(struct xintc_irq_chip *irqc)
 static void xil_intc_irq_handler(struct irq_desc *desc)
 {
 	struct irq_chip *chip = irq_desc_get_chip(desc);
-	struct xintc_irq_chip *local_intc =
+	struct xintc_irq_chip *irqc =
 		irq_data_get_irq_handler_data(&desc->irq_data);
-	u32 pending;
 
 	chained_irq_enter(chip, desc);
+
 	do {
-		pending = xintc_get_irq_local(local_intc);
-		if (pending == -1U)
+		u32 hwirq = xintc_read(irqc, IVR);
+
+		if (hwirq == -1U)
 			break;
-		generic_handle_irq(pending);
+
+		generic_handle_domain_irq(irqc->domain, hwirq);
 	} while (true);
 	chained_irq_exit(chip, desc);
 }
@@ -279,8 +271,8 @@ static void xil_intc_handle_irq(struct pt_regs *regs)
 				xintc_write(irqc, IAR, 1 << hwirq);
 				continue;
 			} else {
-				ret = handle_domain_irq(irqc->domain,
-							hwirq, regs);
+				ret = generic_handle_domain_irq(irqc->domain,
+								hwirq);
 				WARN_ONCE(ret, "cpu %d: Unhandled HWIRQ %d\n",
 					  cpu_id, hwirq);
 				continue;
@@ -291,8 +283,13 @@ static void xil_intc_handle_irq(struct pt_regs *regs)
 	} while (1);
 }
 
+#ifndef CONFIG_IRQCHIP_XILINX_INTC_MODULE_SUPPORT_EXPERIMENTAL
 static int __init xilinx_intc_of_init(struct device_node *intc,
 					     struct device_node *parent)
+#else
+static int xilinx_intc_of_init(struct device_node *intc,
+			       struct device_node *parent)
+#endif
 {
 	int ret, irq;
 	struct xintc_irq_chip *irqc;
@@ -370,6 +367,10 @@ static int __init xilinx_intc_of_init(struct device_node *intc,
 
 	if (parent) {
 		irq = irq_of_parse_and_map(intc, 0);
+#ifdef CONFIG_IRQCHIP_XILINX_INTC_MODULE_SUPPORT_EXPERIMENTAL
+		irqc->irq = irq;
+		intc->data = irqc;
+#endif
 		if (irq) {
 			irq_set_chained_handler_and_data(irq,
 							 xil_intc_irq_handler,
@@ -409,5 +410,63 @@ error:
 	return ret;
 }
 
+#ifdef CONFIG_IRQCHIP_XILINX_INTC_MODULE_SUPPORT_EXPERIMENTAL
+static int xilinx_intc_of_remove(struct device_node *intc,
+				 struct device_node *parent)
+{
+	int irq;
+	struct xintc_irq_chip *irqc;
+
+	if (!parent)
+		return 0;
+
+	irqc = intc->data;
+	irq = irqc->irq;
+
+	irq_set_chained_handler_and_data(irq, NULL, NULL);
+
+	if (irqc->domain) {
+		unsigned int tempirq;
+		unsigned int i;
+
+		for (i = 0; i < irqc->domain->mapcount; i++) {
+			tempirq = irq_find_mapping(irqc->domain, i);
+			if (tempirq)
+				irq_dispose_mapping(tempirq);
+		}
+		irq_dispose_mapping(irq);
+		irq_domain_remove(irqc->domain);
+	}
+
+	/*
+	 * Disable all external interrupts until they are
+	 * explicity requested.
+	 */
+	xintc_write(irqc, IER, 0);
+	/* Acknowledge any pending interrupts just in case. */
+	xintc_write(irqc, IAR, 0xffffffff);
+	/* Turn off the Master Enable. */
+	xintc_write(irqc, MER, 0x0);
+
+	iounmap(irqc->base);
+	kfree(irqc);
+
+	return 0;
+}
+
+static struct irqc_init_remove_funps intc_funps = {
+	.irqchip_initp = xilinx_intc_of_init,
+	.irqchip_removep = xilinx_intc_of_remove,
+};
+
+IRQCHIP_PLATFORM_DRIVER_BEGIN(xilinx_intc_xps)
+IRQCHIP_MATCH("xlnx,xps-intc-1.00.a", &intc_funps)
+IRQCHIP_PLATFORM_DRIVER_END(xilinx_intc_xps)
+
+IRQCHIP_PLATFORM_DRIVER_BEGIN(xilinx_intc_opb)
+IRQCHIP_MATCH("xlnx,opb-intc-1.00.c", &intc_funps)
+IRQCHIP_PLATFORM_DRIVER_END(xilinx_intc_opb)
+#else
 IRQCHIP_DECLARE(xilinx_intc_xps, "xlnx,xps-intc-1.00.a", xilinx_intc_of_init);
 IRQCHIP_DECLARE(xilinx_intc_opb, "xlnx,opb-intc-1.00.c", xilinx_intc_of_init);
+#endif

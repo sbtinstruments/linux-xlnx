@@ -4,13 +4,13 @@
 $id: http://devicetree.org/schemas/sound/allwinner,sun4i-a10-spdif.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Allwinner A10 S/PDIF Controller Device Tree Bindings
+title: Allwinner A10 S/PDIF Controller
 
 maintainers:
   - Chen-Yu Tsai <wens@csie.org>
   - Liam Girdwood <lgirdwood@gmail.com>
   - Mark Brown <broonie@kernel.org>
-  - Maxime Ripard <maxime.ripard@bootlin.com>
+  - Maxime Ripard <mripard@kernel.org>
 
 properties:
   "#sound-dai-cells":

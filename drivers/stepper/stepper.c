@@ -5,10 +5,13 @@
 #include <linux/slab.h>
 #include <linux/stepper.h>
 
+#define STEPPER_SWITCHING_TORQUE 100
+
 struct stepper_device {
 	struct device dev;
 	struct delayed_work velocity_dwork;
 	struct mutex velocity_mutex;
+	int abs_torque_holding;
 	int velocity_current;
 	int velocity_target;
 	bool velocity_shifting;
@@ -20,6 +23,28 @@ struct stepper_device {
 #define to_stepper_device(d) container_of(d, struct stepper_device, dev)
 
 static struct workqueue_struct *stepper_workqueue;
+
+static int stepper_validate_abs_torque(struct stepper_device *stepdev, unsigned abs_torque)
+{
+	return (abs_torque <= 100) ? 0 : -EINVAL;
+}
+
+static int stepper_get_abs_torque(struct stepper_device *stepdev, unsigned* abs_torque)
+{
+	struct stepper_ops *ops = &stepdev->ops;
+	return ops->get_abs_torque(&stepdev->dev, abs_torque);
+}
+
+static int stepper_set_abs_torque(struct stepper_device *stepdev, unsigned abs_torque)
+{
+	int ret = 0;
+	struct stepper_ops *ops = &stepdev->ops;
+	ret = stepper_validate_abs_torque(stepdev, abs_torque);
+	if (0 != ret) {
+		return ret;
+	}
+	return ops->set_abs_torque(&stepdev->dev, abs_torque);
+}
 
 static void stepper_reach_target_velocity(struct work_struct *work)
 {
@@ -36,6 +61,7 @@ static void stepper_reach_target_velocity(struct work_struct *work)
 	ops->set_velocity(&stepdev->dev, stepdev->velocity_current);
 	if (stepdev->velocity_current == stepdev->velocity_target) {
 		stepdev->velocity_shifting = false;
+		ops->set_abs_torque(&stepdev->dev, stepdev->abs_torque_holding);
 		goto out_mutex;
 	}
 	queue_delayed_work(stepper_workqueue, dwork,
@@ -66,6 +92,10 @@ static int stepper_set_target_velocity(struct stepper_device *stepdev, int vel)
 		goto out_mutex;
 	}
 	if (stepdev->velocity_shifting) {
+		goto out_mutex;
+	}
+	result = stepper_set_abs_torque(stepdev, (STEPPER_SWITCHING_TORQUE));
+	if (0 != result) {
 		goto out_mutex;
 	}
 	stepdev->velocity_shifting = true;
@@ -106,28 +136,6 @@ static int stepper_set_target_velocity_instant(struct stepper_device *stepdev, i
 	_stepper_set_target_velocity_instant(stepdev, vel);
 	mutex_unlock(&stepdev->velocity_mutex);
 	return 0;
-}
-
-static int stepper_validate_abs_torque(struct stepper_device *stepdev, unsigned abs_torque)
-{
-	return (abs_torque <= 100) ? 0 : -EINVAL;
-}
-
-static int stepper_get_abs_torque(struct stepper_device *stepdev, unsigned* abs_torque)
-{
-	struct stepper_ops *ops = &stepdev->ops;
-	return ops->get_abs_torque(&stepdev->dev, abs_torque);
-}
-
-static int stepper_set_abs_torque(struct stepper_device *stepdev, unsigned abs_torque)
-{
-	int ret = 0;
-	struct stepper_ops *ops = &stepdev->ops;
-	ret = stepper_validate_abs_torque(stepdev, abs_torque);
-	if (0 != ret) {
-		return ret;
-	}
-	return ops->set_abs_torque(&stepdev->dev, abs_torque);
 }
 
 /* force_off */
@@ -271,7 +279,22 @@ static ssize_t abs_torque_show(
 		return result;
 	return result;
 }
-static ssize_t abs_torque_store(
+DEVICE_ATTR(abs_torque, S_IRUGO, abs_torque_show, NULL);
+
+/* abs_torque_holding */
+static ssize_t abs_torque_holding_show(
+	struct device *dev,
+	struct device_attribute *attr,
+	char *buf)
+{
+	int result;
+	struct stepper_device *stepdev = to_stepper_device(dev);
+	mutex_lock(&stepdev->velocity_mutex);
+	result = scnprintf(buf, PAGE_SIZE, "%d\n", stepdev->abs_torque_holding);
+	mutex_unlock(&stepdev->velocity_mutex);
+	return result;
+}
+static ssize_t abs_torque_holding_store(
 	struct device *dev,
 	struct device_attribute *attr,
 	const char *buf,
@@ -282,12 +305,24 @@ static ssize_t abs_torque_store(
 	struct stepper_device *stepdev = to_stepper_device(dev);
 	if (0 != result)
 		return result;
-	result = stepper_set_abs_torque(stepdev, value);
+	result = stepper_validate_abs_torque(stepdev, value);
 	if (0 != result)
 		return result;
-	return count;
+	mutex_lock(&stepdev->velocity_mutex);
+	stepdev->abs_torque_holding = value;
+	if (!stepdev->velocity_shifting) {
+		result = stepper_set_abs_torque(stepdev, value);
+		if (0 != result) {
+			goto out_mutex;
+		}
+	}
+	result = count;
+out_mutex:
+	mutex_unlock(&stepdev->velocity_mutex);
+	return result;
 }
-DEVICE_ATTR(abs_torque, S_IRUGO | S_IWUSR, abs_torque_show, abs_torque_store);
+DEVICE_ATTR(abs_torque_holding, S_IRUGO | S_IWUSR,
+            abs_torque_holding_show, abs_torque_holding_store);
 
 /* attribute group */
 static struct attribute *attrs[] = {
@@ -298,6 +333,7 @@ static struct attribute *attrs[] = {
 	&dev_attr_velocity_min.attr,
 	&dev_attr_velocity_max.attr,
 	&dev_attr_abs_torque.attr,
+	&dev_attr_abs_torque_holding.attr,
 	NULL,
 };
 
@@ -348,6 +384,7 @@ __stepper_device_register(struct device *dev, const char *name, void *drvdata,
 
 	INIT_DELAYED_WORK(&stepdev->velocity_dwork, stepper_reach_target_velocity);
 	mutex_init(&stepdev->velocity_mutex);
+	stepdev->abs_torque_holding = 30;
 	stepdev->velocity_current = 0;
 	stepdev->velocity_target = 0;
 	stepdev->velocity_shifting = false;

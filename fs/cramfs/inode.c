@@ -183,6 +183,7 @@ static void *cramfs_blkdev_read(struct super_block *sb, unsigned int offset,
 				unsigned int len)
 {
 	struct address_space *mapping = sb->s_bdev->bd_inode->i_mapping;
+	struct file_ra_state ra;
 	struct page *pages[BLKS_PER_BUF];
 	unsigned i, blocknr, buffer;
 	unsigned long devsize;
@@ -209,9 +210,12 @@ static void *cramfs_blkdev_read(struct super_block *sb, unsigned int offset,
 		return read_buffers[i] + blk_offset;
 	}
 
-	devsize = mapping->host->i_size >> PAGE_SHIFT;
+	devsize = bdev_nr_bytes(sb->s_bdev) >> PAGE_SHIFT;
 
 	/* Ok, read in BLKS_PER_BUF pages completely first. */
+	file_ra_state_init(&ra, mapping);
+	page_cache_sync_readahead(mapping, &ra, NULL, blocknr, BLKS_PER_BUF);
+
 	for (i = 0; i < BLKS_PER_BUF; i++) {
 		struct page *page = NULL;
 
@@ -222,19 +226,6 @@ static void *cramfs_blkdev_read(struct super_block *sb, unsigned int offset,
 				page = NULL;
 		}
 		pages[i] = page;
-	}
-
-	for (i = 0; i < BLKS_PER_BUF; i++) {
-		struct page *page = pages[i];
-
-		if (page) {
-			wait_on_page_locked(page);
-			if (!PageUptodate(page)) {
-				/* asynchronous error */
-				put_page(page);
-				pages[i] = NULL;
-			}
-		}
 	}
 
 	buffer = next_buffer;
@@ -392,8 +383,7 @@ static int cramfs_physmem_mmap(struct file *file, struct vm_area_struct *vma)
 
 	/* Don't map the last page if it contains some other data */
 	if (pgoff + pages == max_pages && cramfs_last_page_is_shared(inode)) {
-		pr_debug("mmap: %s: last page is shared\n",
-			 file_dentry(file)->d_name.name);
+		pr_debug("mmap: %pD: last page is shared\n", file);
 		pages--;
 	}
 
@@ -415,7 +405,7 @@ static int cramfs_physmem_mmap(struct file *file, struct vm_area_struct *vma)
 		/*
 		 * Let's create a mixed map if we can't map it all.
 		 * The normal paging machinery will take care of the
-		 * unpopulated ptes via cramfs_readpage().
+		 * unpopulated ptes via cramfs_read_folio().
 		 */
 		int i;
 		vma->vm_flags |= VM_MIXEDMAP;
@@ -430,16 +420,15 @@ static int cramfs_physmem_mmap(struct file *file, struct vm_area_struct *vma)
 	}
 
 	if (!ret)
-		pr_debug("mapped %s[%lu] at 0x%08lx (%u/%lu pages) "
-			 "to vma 0x%08lx, page_prot 0x%llx\n",
-			 file_dentry(file)->d_name.name, pgoff,
-			 address, pages, vma_pages(vma), vma->vm_start,
+		pr_debug("mapped %pD[%lu] at 0x%08lx (%u/%lu pages) "
+			 "to vma 0x%08lx, page_prot 0x%llx\n", file,
+			 pgoff, address, pages, vma_pages(vma), vma->vm_start,
 			 (unsigned long long)pgprot_val(vma->vm_page_prot));
 	return ret;
 
 bailout:
-	pr_debug("%s[%lu]: direct mmap impossible: %s\n",
-		 file_dentry(file)->d_name.name, pgoff, bailout_reason);
+	pr_debug("%pD[%lu]: direct mmap impossible: %s\n",
+		 file, pgoff, bailout_reason);
 	/* Didn't manage any direct map, but normal paging is still possible */
 	return 0;
 }
@@ -469,8 +458,8 @@ static unsigned long cramfs_physmem_get_unmapped_area(struct file *file,
 	if (!offset || block_pages != pages)
 		return -ENOSYS;
 	addr = sbi->linear_phys_addr + offset;
-	pr_debug("get_unmapped for %s ofs %#lx siz %lu at 0x%08lx\n",
-		 file_dentry(file)->d_name.name, pgoff*PAGE_SIZE, len, addr);
+	pr_debug("get_unmapped for %pD ofs %#lx siz %lu at 0x%08lx\n",
+		 file, pgoff*PAGE_SIZE, len, addr);
 	return addr;
 }
 
@@ -534,7 +523,7 @@ static int cramfs_read_super(struct super_block *sb, struct fs_context *fc,
 		/* check for wrong endianness */
 		if (super->magic == CRAMFS_MAGIC_WEND) {
 			if (!silent)
-				errorf(fc, "cramfs: wrong endianness");
+				errorfc(fc, "wrong endianness");
 			return -EINVAL;
 		}
 
@@ -546,22 +535,22 @@ static int cramfs_read_super(struct super_block *sb, struct fs_context *fc,
 		mutex_unlock(&read_mutex);
 		if (super->magic != CRAMFS_MAGIC) {
 			if (super->magic == CRAMFS_MAGIC_WEND && !silent)
-				errorf(fc, "cramfs: wrong endianness");
+				errorfc(fc, "wrong endianness");
 			else if (!silent)
-				errorf(fc, "cramfs: wrong magic");
+				errorfc(fc, "wrong magic");
 			return -EINVAL;
 		}
 	}
 
 	/* get feature flags first */
 	if (super->flags & ~CRAMFS_SUPPORTED_FLAGS) {
-		errorf(fc, "cramfs: unsupported filesystem features");
+		errorfc(fc, "unsupported filesystem features");
 		return -EINVAL;
 	}
 
 	/* Check that the root inode is in a sane state */
 	if (!S_ISDIR(super->root.mode)) {
-		errorf(fc, "cramfs: root is not a directory");
+		errorfc(fc, "root is not a directory");
 		return -EINVAL;
 	}
 	/* correct strange, hard-coded permissions of mkcramfs */
@@ -580,12 +569,12 @@ static int cramfs_read_super(struct super_block *sb, struct fs_context *fc,
 	sbi->magic = super->magic;
 	sbi->flags = super->flags;
 	if (root_offset == 0)
-		infof(fc, "cramfs: empty filesystem");
+		infofc(fc, "empty filesystem");
 	else if (!(super->flags & CRAMFS_FLAG_SHIFTED_ROOT_OFFSET) &&
 		 ((root_offset != sizeof(struct cramfs_super)) &&
 		  (root_offset != 512 + sizeof(struct cramfs_super))))
 	{
-		errorf(fc, "cramfs: bad root offset %lu", root_offset);
+		errorfc(fc, "bad root offset %lu", root_offset);
 		return -EINVAL;
 	}
 
@@ -690,8 +679,7 @@ static int cramfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bavail = 0;
 	buf->f_files = CRAMFS_SB(sb)->files;
 	buf->f_ffree = 0;
-	buf->f_fsid.val[0] = (u32)id;
-	buf->f_fsid.val[1] = (u32)(id >> 32);
+	buf->f_fsid = u64_to_fsid(id);
 	buf->f_namelen = CRAMFS_MAXPATHLEN;
 	return 0;
 }
@@ -817,8 +805,9 @@ out:
 	return d_splice_alias(inode, dentry);
 }
 
-static int cramfs_readpage(struct file *file, struct page *page)
+static int cramfs_read_folio(struct file *file, struct folio *folio)
 {
+	struct page *page = &folio->page;
 	struct inode *inode = page->mapping->host;
 	u32 maxblock;
 	int bytes_filled;
@@ -928,7 +917,7 @@ err:
 }
 
 static const struct address_space_operations cramfs_aops = {
-	.readpage = cramfs_readpage
+	.read_folio = cramfs_read_folio
 };
 
 /*

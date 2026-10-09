@@ -6,13 +6,6 @@ config SND_SOC_XILINX_DP
 	help
 	  Audio support the for Xilinx DisplayPort.
 
-config SND_SOC_XILINX_AUDIO_FORMATTER
-	tristate "Audio support for the the Xilinx audio formatter"
-	help
-	  Select this option to enable Xilinx audio formatter
-	  support. This provides PCM platform device support for
-	  audio functionality.
-
 config SND_SOC_XILINX_SDI
 	tristate "Audio support for the the Xilinx SDI"
 	depends on DRM_XLNX_SDI
@@ -32,14 +25,14 @@ config SND_SOC_XILINX_I2S
 	  I2S playback and capture using xilinx soft IP
 
 config SND_SOC_XILINX_AUDIO_FORMATTER
-        tristate "Audio support for the the Xilinx audio formatter"
-        help
-          Select this option to enable Xilinx audio formatter
-          support. This provides DMA platform device support for
-          audio functionality.
+	tristate "Audio support for the Xilinx audio formatter"
+	help
+	  Select this option to enable Xilinx audio formatter
+	  support. This provides DMA platform device support for
+	  audio functionality.
 
 config SND_SOC_XILINX_SPDIF
-	tristate "Audio support for the the Xilinx SPDIF"
+	tristate "Audio support for the Xilinx SPDIF"
 	help
 	  Select this option to enable Xilinx SPDIF Audio.
 	  Enabling this provides one of the component required in ASoC
@@ -49,7 +42,6 @@ config SND_SOC_XILINX_SPDIF
 config SND_SOC_XILINX_PL_SND_CARD
 	tristate "Audio support for the the Xilinx PL sound card"
 	depends on SND_SOC_XILINX_AUDIO_FORMATTER || SND_SOC_XILINX_I2S || SND_SOC_XILINX_SDI
-	select SND_SOC_HDMI_CODEC
 	help
 	  Select this option to enable Xilinx PL sound card
 	  support. This enables sound card using xilinx soft IPs

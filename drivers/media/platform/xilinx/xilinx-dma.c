@@ -31,7 +31,7 @@
 #define XVIP_DMA_DEF_FORMAT		V4L2_PIX_FMT_YUYV
 #define XVIP_DMA_DEF_WIDTH		1920
 #define XVIP_DMA_DEF_HEIGHT		1080
-
+#define XVIP_DMA_DEF_WIDTH_ALIGN	2
 /* Minimum and maximum widths are expressed in bytes */
 #define XVIP_DMA_MIN_WIDTH		1U
 #define XVIP_DMA_MAX_WIDTH		65535U
@@ -47,7 +47,7 @@ xvip_dma_remote_subdev(struct media_pad *local, u32 *pad)
 {
 	struct media_pad *remote;
 
-	remote = media_entity_remote_pad(local);
+	remote = media_pad_remote_pad_first(local);
 	if (!remote || !is_media_entity_v4l2_subdev(remote->entity))
 		return NULL;
 
@@ -90,7 +90,6 @@ static int xvip_dma_verify_format(struct xvip_dma *dma)
  * Pipeline Stream Management
  */
 
-
 /**
  * xvip_pipeline_set_stream - Enable/disable streaming on a pipeline
  * @pipe: The pipeline
@@ -126,7 +125,7 @@ static int xvip_pipeline_set_stream(struct xvip_pipeline *pipe, bool on)
 	xdev = pipe->xdev;
 
 	if (on) {
-		if (pipe->stream_count == pipe->num_dmas - 1) {
+		if (pipe->stream_count == pipe->num_dmas - 1 || xdev->atomic_streamon) {
 			ret = xvip_graph_pipeline_start_stop(xdev, pipe, true);
 			if (ret < 0)
 				goto done;
@@ -272,7 +271,7 @@ static void xvip_dma_complete(void *param)
 	struct xvip_dma_buffer *buf = param;
 	struct xvip_dma *dma = buf->dma;
 	int i, sizeimage;
-	u32 fid;
+	u32 fid = 0;
 	int status;
 
 	spin_lock(&dma->queued_lock);
@@ -438,14 +437,26 @@ static void xvip_dma_buffer_queue(struct vb2_buffer *vb)
 					      (pix_mp->height - dma->r.height);
 		} else {
 			/* Handling non-contiguous data with mplanes */
-			if (dma->fmtinfo->buffers == 2) {
+			if (dma->fmtinfo->buffers == 2 || dma->fmtinfo->buffers == 3) {
 				dma_addr_t chroma_addr =
 					vb2_dma_contig_plane_dma_addr(vb, 1);
 				luma_size = bpl * dma->xt.numf;
 				if (chroma_addr > addr)
 					dma->sgl[0].dst_icg = chroma_addr -
-							      addr - luma_size;
-				}
+						addr - luma_size;
+			}
+			/* Handle the 3rd plane for Y_U_V8 */
+			if (dma->fmtinfo->buffers == 3) {
+				dma_addr_t chroma_addr =
+					vb2_dma_contig_plane_dma_addr(vb, 1);
+				dma_addr_t third_plane_addr =
+					vb2_dma_contig_plane_dma_addr(vb, 2);
+				u32 chroma_size = bpl * dma->xt.numf;
+
+				if (third_plane_addr > chroma_addr)
+					dma->sgl[0].dst_icg = third_plane_addr -
+						chroma_addr - chroma_size;
+			}
 		}
 	} else {
 		struct v4l2_pix_format *pix;
@@ -526,10 +537,9 @@ static int xvip_dma_start_streaming(struct vb2_queue *vq, unsigned int count)
 	 * streaming.
 	 */
 	mutex_lock(&dma->xdev->lock);
-	pipe = dma->video.entity.pipe
-	     ? to_xvip_pipeline(&dma->video.entity) : &dma->pipe;
+	pipe = to_xvip_pipeline(&dma->video) ? : &dma->pipe;
 
-	ret = media_pipeline_start(&dma->video.entity, &pipe->pipe);
+	ret = video_device_pipeline_start(&dma->video, &pipe->pipe);
 	mutex_unlock(&dma->xdev->lock);
 	if (ret < 0)
 		goto error;
@@ -552,6 +562,11 @@ static int xvip_dma_start_streaming(struct vb2_queue *vq, unsigned int count)
 	 */
 	if (!dma->low_latency_cap) {
 		dma_async_issue_pending(dma->dma);
+
+		/* Start the pipeline. */
+		ret = xvip_pipeline_set_stream(pipe, true);
+		if (ret < 0)
+			goto error_stop;
 	} else {
 		/* For low latency capture, return the first buffer early
 		 * so that consumer can initialize until we start DMA.
@@ -562,15 +577,10 @@ static int xvip_dma_start_streaming(struct vb2_queue *vq, unsigned int count)
 		buf->desc->callback = NULL;
 	}
 
-	/* Start the pipeline. */
-	ret = xvip_pipeline_set_stream(pipe, true);
-	if (ret < 0)
-		goto error_stop;
-
 	return 0;
 
 error_stop:
-	media_pipeline_stop(&dma->video.entity);
+	video_device_pipeline_stop(&dma->video);
 
 error:
 	dmaengine_terminate_all(dma->dma);
@@ -588,7 +598,7 @@ error:
 static void xvip_dma_stop_streaming(struct vb2_queue *vq)
 {
 	struct xvip_dma *dma = vb2_get_drv_priv(vq);
-	struct xvip_pipeline *pipe = to_xvip_pipeline(&dma->video.entity);
+	struct xvip_pipeline *pipe = to_xvip_pipeline(&dma->video);
 	struct xvip_dma_buffer *buf, *nbuf;
 
 	/* Stop the pipeline. */
@@ -599,7 +609,7 @@ static void xvip_dma_stop_streaming(struct vb2_queue *vq)
 
 	/* Cleanup the pipeline and mark it as being stopped. */
 	xvip_pipeline_cleanup(pipe);
-	media_pipeline_stop(&dma->video.entity);
+	video_device_pipeline_stop(&dma->video);
 
 	/* Give back all queued buffers to videobuf2. */
 	spin_lock_irq(&dma->queued_lock);
@@ -646,7 +656,7 @@ static int xvip_xdma_enum_fmt(struct xvip_dma *dma, struct v4l2_fmtdesc *f,
 {
 	const struct xvip_video_format *fmt;
 	int ret;
-	u32 i, fmt_cnt, *fmts;
+	u32 i, fmt_cnt = 0, *fmts = NULL;
 
 	ret = xilinx_xdma_get_v4l2_vid_fmts(dma->dma, &fmt_cnt, &fmts);
 	if (ret)
@@ -811,7 +821,6 @@ __xvip_dma_try_format(struct xvip_dma *dma,
 	unsigned int min_bpl;
 	unsigned int max_bpl;
 	unsigned int width;
-	unsigned int align;
 	unsigned int bpl;
 	unsigned int i, hsub, vsub, plane_width, plane_height;
 	unsigned int fourcc;
@@ -863,16 +872,8 @@ __xvip_dma_try_format(struct xvip_dma *dma,
 	 * the minimum and maximum values, clamp the requested width and convert
 	 * it back to pixels.
 	 */
-	align = lcm(dma->align, info->bpp >> 3);
-	if (!align) {
-		dev_err(dma->xdev->dev,
-			"transfer alignment is 0: dma->align = %x, bpp = %u\n",
-			dma->align, info->bpp);
-		return;
-	}
-
-	min_width = roundup(XVIP_DMA_MIN_WIDTH, align);
-	max_width = rounddown(XVIP_DMA_MAX_WIDTH, align);
+	min_width = roundup(XVIP_DMA_MIN_WIDTH, dma->width_align);
+	max_width = rounddown(XVIP_DMA_MAX_WIDTH, dma->width_align);
 
 	if (V4L2_TYPE_IS_MULTIPLANAR(dma->format.type)) {
 		struct v4l2_pix_format_mplane *pix_mp;
@@ -881,7 +882,8 @@ __xvip_dma_try_format(struct xvip_dma *dma,
 		pix_mp = &format->fmt.pix_mp;
 		plane_fmt = pix_mp->plane_fmt;
 		pix_mp->field = dma->format.fmt.pix_mp.field;
-		width = rounddown(pix_mp->width * info->bpl_factor, align);
+		width = rounddown(pix_mp->width * info->bpl_factor,
+				  dma->width_align);
 		pix_mp->width = clamp(width, min_width, max_width) /
 				info->bpl_factor;
 		pix_mp->height = clamp(pix_mp->height, XVIP_DMA_MIN_HEIGHT,
@@ -943,7 +945,8 @@ __xvip_dma_try_format(struct xvip_dma *dma,
 
 		pix = &format->fmt.pix;
 		pix->field = dma->format.fmt.pix.field;
-		width = rounddown(pix->width * info->bpl_factor, align);
+		width = rounddown(pix->width * info->bpl_factor,
+				  dma->width_align);
 		pix->width = clamp(width, min_width, max_width) /
 			     info->bpl_factor;
 		pix->height = clamp(pix->height, XVIP_DMA_MIN_HEIGHT,
@@ -978,7 +981,7 @@ xvip_dma_set_format(struct file *file, void *fh, struct v4l2_format *format)
 {
 	struct v4l2_fh *vfh = file->private_data;
 	struct xvip_dma *dma = to_xvip_dma(vfh->vdev);
-	const struct xvip_video_format *info;
+	const struct xvip_video_format *info = NULL;
 
 	__xvip_dma_try_format(dma, format, &info);
 
@@ -1096,8 +1099,8 @@ xvip_dma_s_selection(struct file *file, void *fh, struct v4l2_selection *sel)
 	    sel->r.top != 0 || sel->r.left != 0)
 		return -EINVAL;
 
-	sel->r.width = roundup(max(XVIP_DMA_MIN_WIDTH, sel->r.width),
-			       dma->align);
+	sel->r.width = rounddown(max(XVIP_DMA_MIN_WIDTH, sel->r.width),
+				 dma->width_align);
 	sel->r.height = max(XVIP_DMA_MIN_HEIGHT, sel->r.height);
 	dma->r.width = sel->r.width;
 	dma->r.height = sel->r.height;
@@ -1145,6 +1148,9 @@ static int xvip_dma_s_ctrl(struct v4l2_ctrl *ctl)
 	struct xvip_dma *dma = container_of(ctl->handler, struct xvip_dma,
 					    ctrl_handler);
 	int ret = 0;
+	struct xvip_pipeline *pipe = media_entity_pipeline(&dma->video.entity) ?
+		to_xvip_pipeline(&dma->video) : &dma->pipe;
+	struct xvip_dma_buffer *buf, *nbuf;
 
 	switch (ctl->id)  {
 	case V4L2_CID_XILINX_LOW_LATENCY:
@@ -1166,16 +1172,35 @@ static int xvip_dma_s_ctrl(struct v4l2_ctrl *ctl)
 			dma->low_latency_cap = false;
 			xilinx_xdma_set_mode(dma->dma, AUTO_RESTART);
 		} else if (ctl->val == XVIP_START_DMA) {
-			/*
-			 * In low latency capture, the driver allows application
-			 * to start dma when queue has buffers. That's why we
-			 * don't check for vb2_is_busy().
-			 */
 			if (dma->low_latency_cap &&
-			    vb2_is_streaming(&dma->queue))
+			    vb2_is_streaming(&dma->queue)) {
+				/*
+				 * In low latency capture, the driver allows application
+				 * to start dma when queue has buffers. That's why we
+				 * don't check for vb2_is_busy().
+				 */
 				dma_async_issue_pending(dma->dma);
-			else
+
+				/* Start the pipeline. */
+				ret = xvip_pipeline_set_stream(pipe, true);
+				if (ret < 0) {
+					dev_err(dma->xdev->dev, "Failed to set stream\n");
+					media_pipeline_stop(dma->video.entity.pads);
+					dmaengine_terminate_all(dma->dma);
+
+					/* Give back all queued buffers to videobuf2. */
+					spin_lock_irq(&dma->queued_lock);
+					list_for_each_entry_safe(buf, nbuf,
+								 &dma->queued_bufs, queue) {
+						vb2_buffer_done(&buf->buf.vb2_buf,
+								VB2_BUF_STATE_QUEUED);
+						list_del(&buf->queue);
+					}
+					spin_unlock_irq(&dma->queued_lock);
+				}
+			} else {
 				ret = -EINVAL;
+			}
 		} else {
 			ret = -EINVAL;
 		}
@@ -1358,7 +1383,7 @@ int xvip_dma_init(struct xvip_composite_device *xdev, struct xvip_dma *dma,
 					? "output" : "input",
 		 port);
 
-	dma->video.vfl_type = VFL_TYPE_GRABBER;
+	dma->video.vfl_type = VFL_TYPE_VIDEO;
 	if (type == V4L2_BUF_TYPE_VIDEO_CAPTURE ||
 	    type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
 		dma->video.vfl_dir = VFL_DIR_RX;
@@ -1416,14 +1441,20 @@ int xvip_dma_init(struct xvip_composite_device *xdev, struct xvip_dma *dma,
 	if (IS_ERR(dma->dma)) {
 		ret = PTR_ERR(dma->dma);
 		if (ret != -EPROBE_DEFER)
-			dev_err(dma->xdev->dev,
-				"No Video DMA channel found");
+			dev_err(dma->xdev->dev, "no VDMA channel found\n");
 		goto error;
+	}
+
+	xilinx_xdma_get_width_align(dma->dma, &dma->width_align);
+	if (!dma->width_align) {
+		dev_dbg(dma->xdev->dev,
+			"Using width align %d\n", XVIP_DMA_DEF_WIDTH_ALIGN);
+		dma->width_align = XVIP_DMA_DEF_WIDTH_ALIGN;
 	}
 
 	dma->align = 1 << dma->dma->device->copy_align;
 
-	ret = video_register_device(&dma->video, VFL_TYPE_GRABBER, -1);
+	ret = video_register_device(&dma->video, VFL_TYPE_VIDEO, -1);
 	if (ret < 0) {
 		dev_err(dma->xdev->dev, "failed to register video device\n");
 		goto error;
@@ -1441,7 +1472,7 @@ void xvip_dma_cleanup(struct xvip_dma *dma)
 	if (video_is_registered(&dma->video))
 		video_unregister_device(&dma->video);
 
-	if (!IS_ERR(dma->dma))
+	if (!IS_ERR_OR_NULL(dma->dma))
 		dma_release_channel(dma->dma);
 
 	v4l2_ctrl_handler_free(&dma->ctrl_handler);

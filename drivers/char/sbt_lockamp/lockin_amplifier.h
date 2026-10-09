@@ -8,38 +8,78 @@
 #define LOCKAMP_LOCKAMP_H
 #include <asm/atomic.h>
 #include <linux/cdev.h>
+#include <linux/completion.h>
+#include <linux/dmaengine.h>
+#include <linux/sizes.h>
+#include <linux/spinlock.h>
+#include <linux/workqueue.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 #include <linux/sysfs.h>
-
-struct sample;
 
 /* Class name as it appears in /sys/class  */
 #define LOCKAMP_CLASS_NAME  "lockin_amplifier"
 
 #define LOCKAMP_ADC_SAMPLES_SIZE_S32 16384
 #define LOCKAMP_ADC_SAMPLES_SIZE     (LOCKAMP_ADC_SAMPLES_SIZE_S32 * sizeof(s32))
-#define LOCKAMP_FIFO_CAPACITY        131072
-#define LOCKAMP_FIFO_CAPACITY_N      (LOCKAMP_FIFO_CAPACITY / sizeof(struct sample))
 #define LOCKAMP_FIR_FILTER_COUNT     10
 #define LOCKAMP_FIR_COEF_LEN         512
 #define LOCKAMP_SITES_PER_SAMPLE     2
 #define LOCKAMP_ENTRIES_PER_SITE     4
 #define LOCKAMP_ENTRIES_PER_SAMPLE   (LOCKAMP_ENTRIES_PER_SITE * LOCKAMP_SITES_PER_SAMPLE)
-#define LOCKAMP_SIGNAL_BUF_CAPACITY  4194304 /* 4 MiB */
+#define LOCKAMP_SIGNAL_BUF_CAPACITY  SZ_4M
 
-struct circ_sample_buf {
-	struct sample *buf;
-	size_t capacity_n;
-	ptrdiff_t head;
-	ptrdiff_t tail;
+/*
+ * The FPGA ends a stream packet (tlast) after every period, and each period
+ * is one DMA descriptor. A period holds whole samples (1024 of them).
+ */
+#define LOCKAMP_PERIOD_SIZE          SZ_32K
+#define LOCKAMP_STREAM_BUFS          (LOCKAMP_SIGNAL_BUF_CAPACITY / LOCKAMP_PERIOD_SIZE)
+/*
+ * xilinx_dma starts every pending descriptor as one batch when the channel
+ * goes idle. Two batches in flight keep the next one pending.
+ */
+#define LOCKAMP_STREAM_BATCH         2
+#define LOCKAMP_STREAM_IN_FLIGHT     (2 * LOCKAMP_STREAM_BATCH)
+/* Stopping waits for the periods in flight: 4 x 45 ms at the slowest rate */
+#define LOCKAMP_DRAIN_MS             500
+
+struct lockamp_buf {
+	void *vaddr;
+	dma_addr_t dma;
 };
 
-struct csbuf_snapshot {
-	size_t size_n;
-	ptrdiff_t head;
-	ptrdiff_t tail;
+/* A FIFO of buffers. "first" and "last" run free; mask them to index. */
+struct lockamp_bufq {
+	struct lockamp_buf *bufs[LOCKAMP_STREAM_BUFS];
+	unsigned int first;
+	unsigned int last;
+};
+
+struct lockamp_stream {
+	struct dma_chan *chan;
+	struct device *dma_dev;
+	struct lockamp_buf bufs[LOCKAMP_STREAM_BUFS];
+	/* Takes a period when no buffer is free (the reader is behind) */
+	struct lockamp_buf discard;
+	/* Guards the queues, tail_offset and running */
+	spinlock_t lock;
+	/* Serialises stopping with restart_work */
+	struct mutex control_m;
+	/* Restarts the stream after the FPGA overflowed */
+	struct work_struct restart_work;
+	struct lockamp_bufq free;
+	struct lockamp_bufq in_flight;
+	/* Periods with data, oldest first */
+	struct lockamp_bufq filled;
+	/* Bytes already read from the oldest filled period */
+	size_t tail_offset;
+	bool running;
+	/* The FPGA streams (enabled by lockamp_stream_go) */
+	bool streaming;
+	/* Completes once "running" is false and no period is in flight */
+	struct completion drained;
 };
 
 struct lockamp {
@@ -50,11 +90,17 @@ struct lockamp {
 	struct iio_channel *adc_site0, *adc_site1, *dac_site0, *dac_site1;
 	struct regmap *regmap;
 	u8 __iomem *control;
+	/* Shared with other consumers (the BactoBox beeper). The rail is on
+	 * while any of them holds it on.
+	 */
 	struct regulator *amp_supply;
+	/* Guards amp_supply_on */
+	struct mutex amp_supply_m;
+	/* This driver holds the rail on */
+	bool amp_supply_on;
 	bool amp_supply_force_off;
 
-	struct circ_sample_buf signal_buf;
-	struct mutex signal_buf_m;
+	struct lockamp_stream stream;
 	struct mutex adc_buf_m;
 	char *adc_buffer;
 	int sample_multipliers[LOCKAMP_SITES_PER_SAMPLE];
@@ -78,11 +124,6 @@ struct sample {
 _Static_assert (LOCKAMP_SITES_PER_SAMPLE * sizeof(struct site_sample) == sizeof(struct sample), "struct 'sample' is not packed on this platform");
 
 extern unsigned int lockamp_ma_time_step_ns;
-extern u64 lockamp_fifo_read_duration;
-extern u64 lockamp_fifo_read_delay;
-extern int lockamp_debug1;
-extern int lockamp_debug2;
-extern int lockamp_debug3;
 extern const s32 lockamp_fir_coefs[LOCKAMP_FIR_FILTER_COUNT][LOCKAMP_FIR_COEF_LEN];
 extern const struct attribute_group *lockamp_attr_groups[2];
 extern struct file_operations lockamp_fops;

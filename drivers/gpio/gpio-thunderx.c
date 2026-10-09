@@ -16,7 +16,6 @@
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 
-
 #define GPIO_RX_DAT	0x0
 #define GPIO_TX_SET	0x8
 #define GPIO_TX_CLR	0x10
@@ -169,7 +168,10 @@ static int thunderx_gpio_get_direction(struct gpio_chip *chip, unsigned int line
 
 	bit_cfg = readq(txgpio->register_base + bit_cfg_reg(line));
 
-	return !(bit_cfg & GPIO_BIT_CFG_TX_OE);
+	if (bit_cfg & GPIO_BIT_CFG_TX_OE)
+		return GPIO_LINE_DIRECTION_OUT;
+
+	return GPIO_LINE_DIRECTION_IN;
 }
 
 static int thunderx_gpio_set_config(struct gpio_chip *chip,
@@ -392,9 +394,26 @@ static int thunderx_gpio_child_to_parent_hwirq(struct gpio_chip *gc,
 					       unsigned int *parent_type)
 {
 	struct thunderx_gpio *txgpio = gpiochip_get_data(gc);
+	struct irq_data *irqd;
+	unsigned int irq;
 
-	*parent = txgpio->base_msi + (2 * child);
+	irq = txgpio->msix_entries[child].vector;
+	irqd = irq_domain_get_irq_data(gc->irq.parent_domain, irq);
+	if (!irqd)
+		return -EINVAL;
+	*parent = irqd_to_hwirq(irqd);
 	*parent_type = IRQ_TYPE_LEVEL_HIGH;
+	return 0;
+}
+
+static int thunderx_gpio_populate_parent_alloc_info(struct gpio_chip *chip,
+						    union gpio_irq_fwspec *gfwspec,
+						    unsigned int parent_hwirq,
+						    unsigned int parent_type)
+{
+	msi_alloc_info_t *info = &gfwspec->msiinfo;
+
+	info->hwirq = parent_hwirq;
 	return 0;
 }
 
@@ -512,6 +531,7 @@ static int thunderx_gpio_probe(struct pci_dev *pdev,
 	girq->parent_domain =
 		irq_get_irq_data(txgpio->msix_entries[0].vector)->domain;
 	girq->child_to_parent_hwirq = thunderx_gpio_child_to_parent_hwirq;
+	girq->populate_parent_alloc_arg = thunderx_gpio_populate_parent_alloc_info;
 	girq->handler = handle_bad_irq;
 	girq->default_type = IRQ_TYPE_NONE;
 
@@ -521,9 +541,15 @@ static int thunderx_gpio_probe(struct pci_dev *pdev,
 
 	/* Push on irq_data and the domain for each line. */
 	for (i = 0; i < ngpio; i++) {
-		err = irq_domain_push_irq(chip->irq.domain,
+		struct irq_fwspec fwspec;
+
+		fwspec.fwnode = of_node_to_fwnode(dev->of_node);
+		fwspec.param_count = 2;
+		fwspec.param[0] = i;
+		fwspec.param[1] = IRQ_TYPE_NONE;
+		err = irq_domain_push_irq(girq->domain,
 					  txgpio->msix_entries[i].vector,
-					  chip);
+					  &fwspec);
 		if (err < 0)
 			dev_err(dev, "irq_domain_push_irq: %d\n", err);
 	}

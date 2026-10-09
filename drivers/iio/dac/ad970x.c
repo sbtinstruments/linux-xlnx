@@ -647,6 +647,11 @@ static const struct of_device_id of_ad970x_match[] = {
 	{},
 };
 
+static const struct spi_device_id ad970x_id_table[] = {
+	{ .name = "ad9704" },
+	{},
+};
+
 static struct spi_driver ad970x_driver = {
 	.probe = ad970x_spi_probe,
 	.driver = {
@@ -654,6 +659,7 @@ static struct spi_driver ad970x_driver = {
 		.of_match_table = of_match_ptr(of_ad970x_match),
 		.pm = &ad970x_pm_ops,
 	},
+	.id_table = ad970x_id_table,
 };
 
 module_spi_driver(ad970x_driver);

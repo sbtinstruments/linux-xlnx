@@ -27,8 +27,8 @@
 #define __DC_HWSS_DCE110_H__
 
 #include "core_types.h"
+#include "hw_sequencer_private.h"
 
-#define GAMMA_HW_POINTS_NUM 256
 struct dc;
 struct dc_state;
 struct dm_pp_display_configuration;
@@ -85,5 +85,29 @@ void dce110_edp_wait_for_hpd_ready(
 		struct dc_link *link,
 		bool power_up);
 
+bool dce110_set_backlight_level(struct pipe_ctx *pipe_ctx,
+		uint32_t backlight_pwm_u16_16,
+		uint32_t frame_ramp);
+void dce110_set_abm_immediate_disable(struct pipe_ctx *pipe_ctx);
+void dce110_set_pipe(struct pipe_ctx *pipe_ctx);
+void dce110_disable_link_output(struct dc_link *link,
+		const struct link_resource *link_res,
+		enum signal_type signal);
+void dce110_enable_lvds_link_output(struct dc_link *link,
+		const struct link_resource *link_res,
+		enum clock_source_id clock_source,
+		uint32_t pixel_clock);
+void dce110_enable_tmds_link_output(struct dc_link *link,
+		const struct link_resource *link_res,
+		enum signal_type signal,
+		enum clock_source_id clock_source,
+		enum dc_color_depth color_depth,
+		uint32_t pixel_clock);
+void dce110_enable_dp_link_output(
+		struct dc_link *link,
+		const struct link_resource *link_res,
+		enum signal_type signal,
+		enum clock_source_id clock_source,
+		const struct dc_link_settings *link_settings);
 #endif /* __DC_HWSS_DCE110_H__ */
 

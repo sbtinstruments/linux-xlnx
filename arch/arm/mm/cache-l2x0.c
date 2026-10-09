@@ -805,7 +805,7 @@ static int __init __l2c_init(const struct l2c_init_data *data,
 	aux |= aux_val;
 
 	if (old_aux != aux)
-		pr_warn("L2C: DT/platform modifies aux control register: 0x%08x -> 0x%08x\n",
+		pr_info("L2C: DT/platform modifies aux control register: 0x%08x -> 0x%08x\n",
 		        old_aux, aux);
 
 	/* Determine the number of ways */
@@ -1249,20 +1249,28 @@ static void __init l2c310_of_parse(const struct device_node *np,
 
 	ret = of_property_read_u32(np, "prefetch-data", &val);
 	if (ret == 0) {
-		if (val)
+		if (val) {
 			prefetch |= L310_PREFETCH_CTRL_DATA_PREFETCH;
-		else
+			*aux_val |= L310_PREFETCH_CTRL_DATA_PREFETCH;
+		} else {
 			prefetch &= ~L310_PREFETCH_CTRL_DATA_PREFETCH;
+			*aux_val &= ~L310_PREFETCH_CTRL_DATA_PREFETCH;
+		}
+		*aux_mask &= ~L310_PREFETCH_CTRL_DATA_PREFETCH;
 	} else if (ret != -EINVAL) {
 		pr_err("L2C-310 OF prefetch-data property value is missing\n");
 	}
 
 	ret = of_property_read_u32(np, "prefetch-instr", &val);
 	if (ret == 0) {
-		if (val)
+		if (val) {
 			prefetch |= L310_PREFETCH_CTRL_INSTR_PREFETCH;
-		else
+			*aux_val |= L310_PREFETCH_CTRL_INSTR_PREFETCH;
+		} else {
 			prefetch &= ~L310_PREFETCH_CTRL_INSTR_PREFETCH;
+			*aux_val &= ~L310_PREFETCH_CTRL_INSTR_PREFETCH;
+		}
+		*aux_mask &= ~L310_PREFETCH_CTRL_INSTR_PREFETCH;
 	} else if (ret != -EINVAL) {
 		pr_err("L2C-310 OF prefetch-instr property value is missing\n");
 	}
@@ -1780,7 +1788,7 @@ int __init l2x0_of_init(u32 aux_val, u32 aux_mask)
 
 	old_aux = readl_relaxed(l2x0_base + L2X0_AUX_CTRL);
 	if (old_aux != ((old_aux & aux_mask) | aux_val)) {
-		pr_warn("L2C: platform modifies aux control register: 0x%08x -> 0x%08x\n",
+		pr_info("L2C: platform modifies aux control register: 0x%08x -> 0x%08x\n",
 		        old_aux, (old_aux & aux_mask) | aux_val);
 	} else if (aux_mask != ~0U && aux_val != 0) {
 		pr_alert("L2C: platform provided aux values match the hardware, so have no effect.  Please remove them.\n");

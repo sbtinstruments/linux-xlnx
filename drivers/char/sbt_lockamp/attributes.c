@@ -110,9 +110,7 @@ static ssize_t signal_buf_capacity_show(
 	struct device_attribute *attr,
 	char *buf)
 {
-	struct lockamp *lockamp = dev_get_drvdata(device);
-	size_t capacity = sizeof(struct sample) * lockamp->signal_buf.capacity_n;
-	return snprintf(buf, PAGE_SIZE, "%d\n", capacity);
+	return sysfs_emit(buf, "%d\n", LOCKAMP_SIGNAL_BUF_CAPACITY);
 }
 DEVICE_ATTR(signal_buf_capacity, S_IRUGO, signal_buf_capacity_show, NULL);
 
@@ -743,15 +741,27 @@ static ssize_t sample_multipliers_store(
 	int i;
 	struct lockamp *lockamp = dev_get_drvdata(device);
 	int values[LOCKAMP_SITES_PER_SAMPLE];
+	u32 signs = 0;
 	int ret = sscanf(buf, "%d %d", &values[0], &values[1]);
 	if (LOCKAMP_SITES_PER_SAMPLE != ret) {
+		return -EINVAL;
+	}
+	/* The FPGA flips the sign, so a multiplier is -1 or 1 */
+	for (i = 0; i < LOCKAMP_SITES_PER_SAMPLE; ++i) {
+		if (values[i] != -1 && values[i] != 1)
+			return -EINVAL;
+		if (values[i] < 0)
+			signs |= BIT(i);
+	}
+	ret = lockamp_pm_get(lockamp);
+	if (ret < 0)
 		return ret;
-	}
-	mutex_lock(&lockamp->signal_buf_m);
-	for (i = 0; LOCKAMP_SITES_PER_SAMPLE > i; ++i) {
+	ret = regmap_write(lockamp->regmap, LOCKAMP_REG_SAMPLE_SIGN, signs);
+	lockamp_pm_put(lockamp);
+	if (ret < 0)
+		return ret;
+	for (i = 0; i < LOCKAMP_SITES_PER_SAMPLE; ++i)
 		lockamp->sample_multipliers[i] = values[i];
-	}
-	mutex_unlock(&lockamp->signal_buf_m);
 	return count;
 }
 DEVICE_ATTR(sample_multipliers,
@@ -804,26 +814,6 @@ static ssize_t latest_adc_samples_read(
 }
 BIN_ATTR_RO(latest_adc_samples, LOCKAMP_ADC_SAMPLES_SIZE);
 
-/* fifo_read_duration_us */
-static ssize_t fifo_read_duration_us_show(
-	struct device *device,
-	struct device_attribute *attr,
-	char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "%d\n", (u32)lockamp_fifo_read_duration / 1000);
-}
-DEVICE_ATTR(fifo_read_duration_us, S_IRUGO, fifo_read_duration_us_show, NULL);
-
-/* fifo_read_delay_us */
-static ssize_t fifo_read_delay_us_show(
-	struct device *device,
-	struct device_attribute *attr,
-	char *buf)
-{
-	return scnprintf(buf, PAGE_SIZE, "%d\n", (u32)lockamp_fifo_read_delay / 1000);
-}
-DEVICE_ATTR(fifo_read_delay_us, S_IRUGO, fifo_read_delay_us_show, NULL);
-
 /* amp_supply_force_off */
 static ssize_t amp_supply_force_off_show(
 	struct device *device,
@@ -844,27 +834,16 @@ static ssize_t amp_supply_force_off_store(
 	if (ret < 0) {
 		return ret;
 	}
-	/* Regulator is currently enabled... */
-	if (regulator_is_enabled(lockamp->amp_supply)) {
-		/* ...and we want to force it off... */
-		if (lockamp->amp_supply_force_off) {
-			/* ...so we disable the regulator right away. */
-			ret = regulator_disable(lockamp->amp_supply);
-			if (ret < 0) {
-				dev_err(dev, "Failed to disable the regulator for the amplifiers: %d\n", ret);
-				return ret;
-			}
-		}
-	}
-	/* Regulator is currently disabled even though the system is active
-	 * and we no longer want to force it off... */
-	else if (pm_runtime_active(dev) && !lockamp->amp_supply_force_off) {
-		/* ...so we enable the regulator right way. */
-		ret = regulator_enable(lockamp->amp_supply);
-		if (ret < 0) {
-			dev_err(dev, "Failed to enable the regulator for the amplifiers: %d\n", ret);
-			return ret;
-		}
+	/* A request, not the rail: the rail stays on while another consumer
+	 * holds it on.
+	 */
+	if (lockamp->amp_supply_force_off)
+		ret = lockamp_amp_supply_set(lockamp, false);
+	else if (pm_runtime_active(dev))
+		ret = lockamp_amp_supply_set(lockamp, true);
+	if (ret < 0) {
+		dev_err(dev, "Failed to switch the regulator for the amplifiers: %d\n", ret);
+		return ret;
 	}
 	return count;
 }
@@ -872,10 +851,6 @@ DEVICE_ATTR(amp_supply_force_off,
             S_IRUGO | S_IWUSR,
             amp_supply_force_off_show,
             amp_supply_force_off_store);
-
-DEVICE_INT_ATTR(drv_debug1, S_IRUGO, lockamp_debug1);
-DEVICE_INT_ATTR(drv_debug2, S_IRUGO, lockamp_debug2);
-DEVICE_INT_ATTR(drv_debug3, S_IRUGO, lockamp_debug3);
 
 /* attribute group */
 static struct attribute *attrs[] = {
@@ -905,12 +880,7 @@ static struct attribute *attrs[] = {
 	&dev_attr_reset_ma_filter.attr,
 	&dev_attr_fir_filter.attr,
 	&dev_attr_sample_multipliers.attr,
-	&dev_attr_fifo_read_duration_us.attr,
-	&dev_attr_fifo_read_delay_us.attr,
 	&dev_attr_amp_supply_force_off.attr,
-	&dev_attr_drv_debug1.attr.attr,
-	&dev_attr_drv_debug2.attr.attr,
-	&dev_attr_drv_debug3.attr.attr,
 	NULL
 };
 static struct bin_attribute *bin_attrs[] = {

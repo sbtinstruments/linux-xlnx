@@ -41,43 +41,71 @@
 #define AIE_ERROR_CATEGORY_MASK_DMA		AIE_ERROR_CATMASK(DMA)
 #define AIE_ERROR_CATEGORY_MASK_MEM_PARITY	AIE_ERROR_CATMASK(MEM_PARITY)
 
-/**
- * enum aie_module_type - identifies different hardware modules within a
- *			  tile type. AIE tile may have memory and core
- *			  module. While a PL or shim tile may have PL module.
- * @AIE_MEM_MOD: comprises of the following sub-modules,
- *			* data memory.
- *			* tile DMA.
- *			* lock module.
- *			* events, event broadcast and event actions.
- *			* tracing and profiling.
- * @AIE_CORE_MOD: comprises of the following sub-modules,
- *			* AIE core.
- *			* program Memory.
- *			* events, event broadcast and event actions.
- *			* tracing and profiling.
- *			* AXI-MM and AXI-S tile interconnects.
- * @AIE_PL_MOD: comprises of the following sub-modules,
- *			* PL interface.
- *			* AXI-MM and AXI-S tile interconnects.
- *			* Level 1 interrupt controllers.
- *			* events, event broadcast and event actions.
- *			* tracing and profiling.
- * @AIE_NOC_MOD: comprises of the following sub-modules,
- *			* interface from NoC Slave Unit (NSU)
- *			  (bridge to AXI-MM switch)
- *			* interfaces to NoC NoC Master Unit (NMU)
- *				* shim DMA & locks
- *				* NoC stream interface
- */
-enum aie_module_type {
-	AIE_MEM_MOD,
-	AIE_CORE_MOD,
-	AIE_PL_MOD,
-	AIE_NOC_MOD,
+struct device;
+
+/* Data structure to capture the Tile Information */
+struct aie_tile_info {
+	u32 col_size;
+	u16 major;
+	u16 minor;
+	u16 cols;
+	u16 rows;
+	u16 core_rows;
+	u16 mem_rows;
+	u16 shim_rows;
+	u16 core_row_start;
+	u16 mem_row_start;
+	u16 shim_row_start;
+	u16 core_dma_channels;
+	u16 mem_dma_channels;
+	u16 shim_dma_channels;
+	u16 core_locks;
+	u16 mem_locks;
+	u16 shim_locks;
+	u16 core_events;
+	u16 mem_events;
+	u16 shim_events;
+	u16 padding;
 };
 
-struct device;
+/* Data structure to capture the dma status */
+struct aie_dma_status {
+	u32 s2mm_sts;
+	u32 mm2s_sts;
+};
+
+/* Data structure to capture the core tile status */
+struct aie_core_tile_status {
+	struct aie_dma_status *dma;
+	u32 *core_mode_event_sts;
+	u32 *mem_mode_event_sts;
+	u32 core_status;
+	u32 prg_cntr;
+	u32 stack_ptr;
+	u32 link_reg;
+	u8 *lock_value;
+};
+
+/* Data structure to capture the mem tile status */
+struct aie_mem_tile_status {
+	struct aie_dma_status *dma;
+	u32 *event_sts;
+	u8 *lock_value;
+};
+
+/* Data structure to capture the shim tile status */
+struct aie_shim_tile_status {
+	struct aie_dma_status *dma;
+	u32 *event_sts;
+	u8 *lock_value;
+};
+
+/* Data structure to capture column status */
+struct aie_col_status {
+	struct aie_core_tile_status *core_tile;
+	struct aie_mem_tile_status *mem_tile;
+	struct aie_shim_tile_status *shim_tile;
+};
 
 /**
  * struct aie_error - AI engine error
@@ -116,6 +144,13 @@ const char *aie_get_error_string(struct aie_errors *aie_errs,
 				 struct aie_error *aie_err);
 int aie_flush_errors(struct device *dev);
 void aie_free_errors(struct aie_errors *aie_errs);
+
+int aie_partition_set_freq_req(struct device *dev, u64 freq);
+int aie_partition_get_freq(struct device *dev, u64 *freq);
+int aie_partition_get_freq_req(struct device *dev, u64 *freq);
+
+int aie_get_status_dump(struct device *dev, struct aie_col_status *status);
+int aie_get_tile_info(struct device *dev, struct aie_tile_info *tile_info);
 
 /**
  * aie_get_error_category() - Get the category of an AIE error
@@ -195,5 +230,31 @@ static inline u32 aie_get_error_category(struct aie_error *err)
 {
 	return 0;
 }
+
+static inline int aie_partition_set_freq_req(struct device *dev, u64 freq)
+{
+	return -EINVAL;
+}
+
+static inline int aie_partition_get_freq(struct device *dev, u64 *freq)
+{
+	return -EINVAL;
+}
+
+static inline int aie_partition_get_freq_req(struct device *dev, u64 *freq)
+{
+	return -EINVAL;
+}
+
+static inline int aie_get_status_dump(struct device *dev, struct aie_col_status *status)
+{
+	return -EINVAL;
+}
+
+static inline int aie_get_tile_info(struct device *dev, struct aie_tile_info *tile_info)
+{
+	return -EINVAL;
+}
+
 #endif /* CONFIG_XILINX_AIE */
 #endif

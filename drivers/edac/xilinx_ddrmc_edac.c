@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2020 Xilinx, Inc.
+ * Copyright (C) 2023 Advanced Micro Devices, Inc.
  */
 
 #include <linux/edac.h>
@@ -10,6 +11,9 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/sizes.h>
+#include <linux/firmware/xlnx-zynqmp.h>
+#include <linux/firmware/xlnx-versal-error-events.h>
+#include <linux/firmware/xlnx-event-manager.h>
 
 #include "edac_module.h"
 
@@ -21,9 +25,12 @@
 #define XDDR_PCSR_OFFSET			0xC
 #define XDDR_ISR_OFFSET				0x14
 #define XDDR_IRQ_EN_OFFSET			0x20
+#define XDDR_IRQ1_EN_OFFSET			0x2C
 #define XDDR_IRQ_DIS_OFFSET			0x24
+#define XDDR_IRQ1_DIS_OFFSET			0x30
 #define XDDR_IRQ_CE_MASK			GENMASK(18, 15)
 #define XDDR_IRQ_UE_MASK			GENMASK(14, 11)
+#define XDDR_IRQ_ALL				GENMASK(31, 0)
 
 #define XDDR_REG_CONFIG0_OFFSET			0x258
 #define XDDR_REG_CONFIG0_BUS_WIDTH_MASK		GENMASK(19, 18)
@@ -570,7 +577,52 @@ static irqreturn_t xddr_intr_handler(int irq, void *dev_id)
 }
 
 /**
- * xddr_get_dtype - Return the controller memory width.
+ * xddr_err_callback - Handle Correctable and Uncorrectable errors.
+ * @payload:	payload data.
+ * @data:	mci controller data.
+ *
+ * Handles ECC correctable and uncorrectable errors.
+ */
+static void xddr_err_callback(const u32 *payload, void *data)
+{
+	struct mem_ctl_info *mci = (struct mem_ctl_info *)data;
+	struct xddr_edac_priv *priv;
+	int status, regval;
+	struct xddr_ecc_status *p;
+
+	priv = mci->pvt_info;
+	p = &priv->stat;
+
+	regval = readl(priv->ddrmc_baseaddr + XDDR_ISR_OFFSET);
+	regval &= (XDDR_IRQ_CE_MASK | XDDR_IRQ_UE_MASK);
+	if (!regval)
+		return;
+
+	/* Unlock the PCSR registers */
+	writel(PCSR_UNLOCK_VAL, priv->ddrmc_baseaddr + XDDR_PCSR_OFFSET);
+
+	/* Clear the ISR */
+	writel(regval, priv->ddrmc_baseaddr + XDDR_ISR_OFFSET);
+	/* Lock the PCSR registers */
+
+	writel(1, priv->ddrmc_baseaddr + XDDR_PCSR_OFFSET);
+	if (payload[2] == XPM_VERSAL_EVENT_ERROR_MASK_DDRMC_CR)
+		p->error_type = XDDR_ERR_TYPE_CE;
+	if (payload[2] == XPM_VERSAL_EVENT_ERROR_MASK_DDRMC_NCR)
+		p->error_type = XDDR_ERR_TYPE_UE;
+
+	status = xddr_get_error_info(priv);
+	if (status)
+		return;
+
+	xddr_handle_error(mci, &priv->stat);
+
+	edac_dbg(3, "Total error count CE %d UE %d\n",
+		 priv->ce_cnt, priv->ue_cnt);
+}
+
+/**
+ * xddr_get_dwidth - Return the controller memory width.
  * @base:	DDR memory controller base address.
  *
  * Get the EDAC device type width appropriate for the controller
@@ -736,22 +788,25 @@ static void xddr_enable_intr(struct xddr_edac_priv *priv)
 	/* Unlock the PCSR registers */
 	writel(PCSR_UNLOCK_VAL, priv->ddrmc_baseaddr + XDDR_PCSR_OFFSET);
 
-	/* Enable UE/CE Interrupts */
+	/* Enable UE and CE Interrupts to support the interrupt case */
 	writel(XDDR_IRQ_CE_MASK | XDDR_IRQ_UE_MASK,
 	       priv->ddrmc_baseaddr + XDDR_IRQ_EN_OFFSET);
 
+	writel(XDDR_IRQ_UE_MASK,
+	       priv->ddrmc_baseaddr + XDDR_IRQ1_EN_OFFSET);
 	/* Lock the PCSR registers */
 	writel(1, priv->ddrmc_baseaddr + XDDR_PCSR_OFFSET);
 }
 
-static void xddr_disable_intr(struct xddr_edac_priv *priv)
+static void xddr_disable_all_intr(struct xddr_edac_priv *priv)
 {
 	/* Unlock the PCSR registers */
 	writel(PCSR_UNLOCK_VAL, priv->ddrmc_baseaddr + XDDR_PCSR_OFFSET);
 
-	/* Disable UE/CE Interrupts */
-	writel(XDDR_IRQ_CE_MASK | XDDR_IRQ_UE_MASK,
+	writel(XDDR_IRQ_ALL,
 	       priv->ddrmc_baseaddr + XDDR_IRQ_DIS_OFFSET);
+	writel(XDDR_IRQ_ALL,
+	       priv->ddrmc_baseaddr + XDDR_IRQ1_DIS_OFFSET);
 
 	/* Lock the PCSR registers */
 	writel(1, priv->ddrmc_baseaddr + XDDR_PCSR_OFFSET);
@@ -760,7 +815,6 @@ static void xddr_disable_intr(struct xddr_edac_priv *priv)
 static int xddr_setup_irq(struct mem_ctl_info *mci,
 			  struct platform_device *pdev)
 {
-	struct xddr_edac_priv *priv = mci->pvt_info;
 	int ret, irq;
 
 	irq = platform_get_irq(pdev, 0);
@@ -777,8 +831,6 @@ static int xddr_setup_irq(struct mem_ctl_info *mci,
 		return ret;
 	}
 
-	xddr_enable_intr(priv);
-
 	return 0;
 }
 
@@ -786,7 +838,7 @@ static int xddr_setup_irq(struct mem_ctl_info *mci,
 #define to_mci(k) container_of(k, struct mem_ctl_info, dev)
 
 /**
- * ddr_poison_setup - Update poison registers.
+ * xddr_poison_setup - Update poison registers.
  * @priv:	DDR memory controller private instance data.
  *
  * Update poison registers as per DDR mapping.
@@ -1125,10 +1177,6 @@ static int xddr_mc_probe(struct platform_device *pdev)
 
 	xddr_mc_init(mci, pdev);
 
-	rc = xddr_setup_irq(mci, pdev);
-	if (rc)
-		goto free_edac_mc;
-
 	rc = edac_mc_add_mc(mci);
 	if (rc) {
 		edac_printk(KERN_ERR, EDAC_MC,
@@ -1140,14 +1188,35 @@ static int xddr_mc_probe(struct platform_device *pdev)
 	if (edac_create_sysfs_attributes(mci)) {
 		edac_printk(KERN_ERR, EDAC_MC,
 			    "Failed to create sysfs entries\n");
-		goto free_edac_mc;
+		goto del_edac_mc;
 	}
 
 	xddr_setup_address_map(priv);
 #endif
 
+	rc = xlnx_register_event(PM_NOTIFY_CB, XPM_NODETYPE_VERSAL_EVENT_ERROR_PMC_ERR1,
+				 XPM_VERSAL_EVENT_ERROR_MASK_DDRMC_CR | XPM_VERSAL_EVENT_ERROR_MASK_DDRMC_NCR,
+				 false, xddr_err_callback, mci);
+	if (rc == -ENODEV) {
+		rc = xddr_setup_irq(mci, pdev);
+		if (rc)
+			goto del_edac_mc;
+	}
+	if (rc) {
+		if (rc == -EACCES)
+			rc = -EPROBE_DEFER;
+
+		goto del_edac_mc;
+	}
+
+	xddr_disable_all_intr(priv);
+
+	xddr_enable_intr(priv);
+
 	return rc;
 
+del_edac_mc:
+	edac_mc_del_mc(&pdev->dev);
 free_edac_mc:
 	edac_mc_free(mci);
 
@@ -1165,12 +1234,15 @@ static int xddr_mc_remove(struct platform_device *pdev)
 	struct mem_ctl_info *mci = platform_get_drvdata(pdev);
 	struct xddr_edac_priv *priv = mci->pvt_info;
 
-	xddr_disable_intr(priv);
+	xddr_disable_all_intr(priv);
 
 #ifdef CONFIG_EDAC_DEBUG
 	edac_remove_sysfs_attributes(mci);
 #endif
 
+	xlnx_unregister_event(PM_NOTIFY_CB, XPM_NODETYPE_VERSAL_EVENT_ERROR_PMC_ERR1,
+			      XPM_VERSAL_EVENT_ERROR_MASK_DDRMC_CR |
+			      XPM_VERSAL_EVENT_ERROR_MASK_DDRMC_NCR, xddr_err_callback, mci);
 	edac_mc_del_mc(&pdev->dev);
 	edac_mc_free(mci);
 
