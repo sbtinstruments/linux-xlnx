@@ -2208,6 +2208,20 @@ config FB_SIMPLE
 	  Configuration re: surface address, size, and format must be provided
 	  through device tree, or plain old platform data.
 
+config FB_SBT_SSD2119
+	tristate "SSD2119 panel on SBT's Green Mango display engine"
+	depends on FB && OF && DMA_ENGINE && BACKLIGHT_CLASS_DEVICE
+	depends on ARCH_ZYNQ || COMPILE_TEST
+	select FB_SYS_FOPS
+	select FB_SYS_FILLRECT
+	select FB_SYS_COPYAREA
+	select FB_SYS_IMAGEBLIT
+	select FB_DEFERRED_IO
+	help
+	  Framebuffer for the SSD2119 panel on SBT Instruments' Green Mango
+	  boards. The FPGA image's display engine sends the pixels to the
+	  panel's SPI bus by DMA, so an update costs no CPU per byte.
+
 config FB_SSD1307
 	tristate "Solomon SSD1307 framebuffer support"
 	depends on FB && I2C
