@@ -243,6 +243,22 @@ static int da9063_restart_handler(struct sys_off_data *data)
 	 * for a "deeper" (more low-level) reset.
 	 */
 
+	/* Hold nRESET (the ZYNQ's PS_POR_B) for the longest reset timer after
+	 * the wake-up. A trip through POWER-DOWN mode takes only milliseconds,
+	 * so the supplies never fully discharge. With the OTP default of 1 ms,
+	 * the BootROM sometimes fails to read the QSPI flash (REBOOT_STATUS
+	 * error code 0x2000) and parks. The board then stays dark until a power
+	 * cycle (sbt/drupe#48). A cold start reloads the OTP default, so this
+	 * only lengthens a warm restart, by about 1 s.
+	 */
+	ret = i2c_smbus_read_byte_data(client, DA9063_REG_RESET);
+	if (ret >= 0)
+		ret = i2c_smbus_write_byte_data(client, DA9063_REG_RESET,
+		                                (ret & DA9063_RESET_EVENT_MASK) |
+		                                DA9063_RESET_TIMER_1048MS);
+	if (ret < 0)
+		dev_alert(da9063->dev, "Failed to set the reset timer: %d\n", ret);
+
 	dev_dbg(da9063->dev, "Setting the DA9063_WAKE_UP bit to "
 	                     "wake the system again once it is powered down\n");
 	ret = i2c_smbus_write_byte_data(client, DA9063_REG_CONTROL_F,
