@@ -25,42 +25,22 @@ static int lockamp_get_iio_chans(struct lockamp *lockamp,
 {
 	/* adc */
 	lockamp->adc_site0 = devm_iio_channel_get(&pdev->dev, "adc-site0");
-	if (IS_ERR(lockamp->adc_site0)) {
-		if (-EPROBE_DEFER == PTR_ERR(lockamp->adc_site0)) {
-			return -EPROBE_DEFER;
-		}
-		dev_err(&pdev->dev, "Failed to get ADC for site0: %ld\n",
-		        PTR_ERR(lockamp->adc_site0));
-		return PTR_ERR(lockamp->adc_site0);
-	}
+	if (IS_ERR(lockamp->adc_site0))
+		return dev_err_probe(&pdev->dev, PTR_ERR(lockamp->adc_site0),
+				     "Failed to get ADC for site0\n");
 	lockamp->adc_site1 = devm_iio_channel_get(&pdev->dev, "adc-site1");
-	if (IS_ERR(lockamp->adc_site1)) {
-		if (-EPROBE_DEFER == PTR_ERR(lockamp->adc_site1)) {
-			return -EPROBE_DEFER;
-		}
-		dev_err(&pdev->dev, "Failed to get ADC for site1: %ld\n",
-		        PTR_ERR(lockamp->adc_site1));
-		return PTR_ERR(lockamp->adc_site1);
-	}
+	if (IS_ERR(lockamp->adc_site1))
+		return dev_err_probe(&pdev->dev, PTR_ERR(lockamp->adc_site1),
+				     "Failed to get ADC for site1\n");
 	/* dac */
 	lockamp->dac_site0 = devm_iio_channel_get(&pdev->dev, "dac-site0");
-	if (IS_ERR(lockamp->dac_site0)) {
-		if (-EPROBE_DEFER == PTR_ERR(lockamp->dac_site0)) {
-			return -EPROBE_DEFER;
-		}
-		dev_err(&pdev->dev, "Failed to get DAC for site0: %ld\n",
-		        PTR_ERR(lockamp->dac_site0));
-		return PTR_ERR(lockamp->dac_site0);
-	}
+	if (IS_ERR(lockamp->dac_site0))
+		return dev_err_probe(&pdev->dev, PTR_ERR(lockamp->dac_site0),
+				     "Failed to get DAC for site0\n");
 	lockamp->dac_site1 = devm_iio_channel_get(&pdev->dev, "dac-site1");
-	if (IS_ERR(lockamp->dac_site1)) {
-		if (-EPROBE_DEFER == PTR_ERR(lockamp->dac_site1)) {
-			return -EPROBE_DEFER;
-		}
-		dev_err(&pdev->dev, "Failed to get DAC for site1: %ld\n",
-		        PTR_ERR(lockamp->dac_site1));
-		return PTR_ERR(lockamp->dac_site1);
-	}
+	if (IS_ERR(lockamp->dac_site1))
+		return dev_err_probe(&pdev->dev, PTR_ERR(lockamp->dac_site1),
+				     "Failed to get DAC for site1\n");
 	return 0;
 }
 
@@ -87,10 +67,8 @@ static int lockamp_get_io_resources(struct lockamp *lockamp,
 {
 	int ret;
 	ret = lockamp_get_iio_chans(lockamp, pdev);
-	if (ret < 0) {
-		dev_err(&pdev->dev, "Failed to get IIO channels: %d\n", ret);
+	if (ret < 0)
 		return ret;
-	}
 	ret = lockamp_get_iomem(lockamp, pdev);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to get IO memory: %d\n", ret);
@@ -146,15 +124,40 @@ static struct regmap_config lockamp_regmap_config = {
 	.val_bits             = 32,
 	.reg_stride           = 4,
 	.max_register         = 0x1000,
-	/* num_reg_defaults_raw ensures that the cache is initialized from
-	 * HW reads. It should be equal to the register count. I.e.,
-	 * max_register / reg_stride. */
+	/* The register count, max_register / reg_stride. lockamp_regmap_init
+	 * reads that many defaults from the hardware.
+	 */
 	.num_reg_defaults_raw = 1024,
 	.cache_type           = REGCACHE_FLAT,
 	.readable_reg         = lockamp_readable_reg,
 	.writeable_reg        = lockamp_writeable_reg,
 	.volatile_reg         = lockamp_volatile_reg,
 };
+
+/*
+ * The register cache starts from what the hardware holds. Read it here and
+ * hand it over as the raw defaults: regcache would read it back itself, but
+ * it warns that it has no defaults when it does.
+ */
+static struct regmap *lockamp_regmap_init(struct lockamp *lockamp)
+{
+	struct regmap_config config = lockamp_regmap_config;
+	unsigned int i, reg;
+	u32 *defaults;
+
+	defaults = devm_kcalloc(lockamp->dev, config.num_reg_defaults_raw,
+				sizeof(*defaults), GFP_KERNEL);
+	if (!defaults)
+		return ERR_PTR(-ENOMEM);
+	for (i = 0; i < config.num_reg_defaults_raw; i++) {
+		reg = i * config.reg_stride;
+		if (lockamp_readable_reg(lockamp->dev, reg) &&
+		    !lockamp_volatile_reg(lockamp->dev, reg))
+			defaults[i] = ioread32(lockamp->control + reg);
+	}
+	config.reg_defaults_raw = defaults;
+	return devm_regmap_init_mmio(lockamp->dev, lockamp->control, &config);
+}
 
 static int lockamp_probe(struct platform_device *pdev)
 {
@@ -218,7 +221,8 @@ static int lockamp_probe(struct platform_device *pdev)
 	/* I/O resources */
 	ret = lockamp_get_io_resources(lockamp, pdev);
 	if (ret < 0) {
-		dev_err(lockamp->dev, "Failed to initialize lock-in amplifier.\n");
+		dev_err_probe(lockamp->dev, ret,
+			      "Failed to initialize lock-in amplifier.\n");
 		goto out_device;
 	}
 
@@ -258,8 +262,7 @@ static int lockamp_probe(struct platform_device *pdev)
 	}
 
 	/* Regmap */
-	lockamp->regmap = devm_regmap_init_mmio(lockamp->dev, lockamp->control,
-	                                        &lockamp_regmap_config);
+	lockamp->regmap = lockamp_regmap_init(lockamp);
 	if (IS_ERR(lockamp->regmap)) {
 		dev_err(lockamp->dev, "Failed to initialize regmap: %ld\n",
 		        PTR_ERR(lockamp->regmap));
