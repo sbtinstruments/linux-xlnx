@@ -346,7 +346,7 @@ static int slf3x_probe(struct i2c_client *client,
 	ret = devm_iio_device_register(&client->dev, indio_dev);
 	if (ret) {
 		dev_err(&client->dev, "failed to register iio device\n");
-		goto unregister_buffer;
+		return ret;
 	}
 
 	// This is not a proper reset, but we prefer not to use the general call address.
@@ -356,7 +356,7 @@ static int slf3x_probe(struct i2c_client *client,
 	if (ret) {
 		dev_err(&client->dev,
 			"failed to reset sensor\n");
-		goto unregister_buffer;
+		return ret;
 	}
 	// Sleep for at least 0.5 msecs as per sensor specification
 	usleep_range(500, 700);
@@ -367,22 +367,10 @@ static int slf3x_probe(struct i2c_client *client,
 	if (ret) {
 		dev_err(&client->dev,
 			"failed to start continuous measurement\n");
-		goto unregister_buffer;
+		return ret;
 	}
 
 	return 0;
-
-unregister_buffer:
-	iio_triggered_buffer_cleanup(indio_dev);
-	return ret;
-}
-
-static void slf3x_remove(struct i2c_client *client)
-{
-	struct iio_dev *indio_dev = i2c_get_clientdata(client);
-
-	iio_device_unregister(indio_dev);
-	iio_triggered_buffer_cleanup(indio_dev);
 }
 
 static const struct i2c_device_id slf3x_id[] = { { "slf3s-1300f", SLF3S_1300F },
@@ -397,7 +385,6 @@ static struct i2c_driver slf3x_driver = {
 		.of_match_table = of_match_ptr(slf3x_dt_ids),
 	},
 	.probe = slf3x_probe,
-	.remove = slf3x_remove,
 	.id_table = slf3x_id,
 };
 module_i2c_driver(slf3x_driver);
