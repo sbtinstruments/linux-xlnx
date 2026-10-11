@@ -29,6 +29,7 @@
 #include <linux/slab.h>
 #include <linux/of.h>
 #include <linux/clk.h>
+#include <linux/fpga/fpga-mgr.h>
 #include <linux/pm_runtime.h>
 
 #define DRIVER_NAME "xiic-i2c"
@@ -74,6 +75,7 @@ enum i2c_scl_freq {
  * @smbus_block_read: Flag to handle block read
  * @input_clk: Input clock to I2C controller
  * @i2c_clk: I2C SCL frequency
+ * @pl_hook: Holds the bus across a reload of the FPGA image
  */
 struct xiic_i2c {
 	struct device *dev;
@@ -96,6 +98,7 @@ struct xiic_i2c {
 	bool smbus_block_read;
 	unsigned long input_clk;
 	unsigned int i2c_clk;
+	struct fpga_mgr_pl_hook pl_hook;
 };
 
 struct xiic_version_data {
@@ -1216,6 +1219,27 @@ static const struct of_device_id xiic_of_match[] = {
 MODULE_DEVICE_TABLE(of, xiic_of_match);
 #endif
 
+/*
+ * A full reload of the FPGA image resets the controller, and an access while
+ * it loads never completes. Hold the bus so no transfer starts. Every
+ * transfer sets the controller up again (xiic_reinit), so resuming only lets
+ * them run.
+ */
+static int xiic_pl_pause(struct fpga_mgr_pl_hook *hook)
+{
+	struct xiic_i2c *i2c = container_of(hook, struct xiic_i2c, pl_hook);
+
+	i2c_lock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
+	return 0;
+}
+
+static void xiic_pl_resume(struct fpga_mgr_pl_hook *hook)
+{
+	struct xiic_i2c *i2c = container_of(hook, struct xiic_i2c, pl_hook);
+
+	i2c_unlock_bus(&i2c->adap, I2C_LOCK_ROOT_ADAPTER);
+}
+
 static int xiic_i2c_probe(struct platform_device *pdev)
 {
 	struct xiic_i2c *i2c;
@@ -1326,6 +1350,11 @@ static int xiic_i2c_probe(struct platform_device *pdev)
 			i2c_new_client_device(&i2c->adap, pdata->devices + i);
 	}
 
+	i2c->pl_hook.pause = xiic_pl_pause;
+	i2c->pl_hook.resume = xiic_pl_resume;
+	i2c->pl_hook.priority = FPGA_MGR_PL_HOOK_BUS;
+	fpga_mgr_pl_hook_register(&i2c->pl_hook);
+
 	dev_dbg(&pdev->dev, "mmio %08lx irq %d scl clock frequency %d\n",
 		(unsigned long)res->start, irq, i2c->i2c_clk);
 
@@ -1342,6 +1371,8 @@ static int xiic_i2c_remove(struct platform_device *pdev)
 {
 	struct xiic_i2c *i2c = platform_get_drvdata(pdev);
 	int ret;
+
+	fpga_mgr_pl_hook_unregister(&i2c->pl_hook);
 
 	/* remove adapter & data */
 	i2c_del_adapter(&i2c->adap);

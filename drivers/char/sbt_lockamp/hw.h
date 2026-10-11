@@ -50,6 +50,8 @@
 
 /* Corresponding to 125 MHz */
 #define LOCKAMP_BASE_TIME_STEP      8
+/* How long the ADC's clock takes to start after a reload, with margin */
+#define LOCKAMP_RELOAD_CLOCK_MS     20
 #define LOCKAMP_GEN_SCALE_MIN       0
 /* s18 max */
 #define LOCKAMP_GEN_SCALE_MAX       131071

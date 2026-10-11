@@ -26,8 +26,6 @@ struct chunk_info {
 	size_t data_size_n;
 };
 
-static unsigned int open_count = 0;
-
 static void reset_start_time(struct lockamp *lockamp)
 {
 	lockamp->last_start_time_ns = ktime_get_ns();
@@ -43,11 +41,18 @@ static int device_open(struct inode *inode, struct file *file)
 	struct lockamp *lockamp;
 	lockamp = container_of(inode->i_cdev, struct lockamp, cdev);
 	file->private_data = lockamp;
+	mutex_lock(&lockamp->reload_m);
 	/* Only a single reader at a time */
-	if (0 < open_count) {
-		return -EBUSY;
+	if (lockamp->open_count) {
+		ret = -EBUSY;
+		goto out_unlock;
 	}
-	++open_count;
+	/* None if a reload of the FPGA image could not give it back */
+	if (!lockamp->stream.chan) {
+		ret = -ENODEV;
+		goto out_unlock;
+	}
+	++lockamp->open_count;
 
 	/* power */
 	ret = lockamp_pm_get(lockamp);
@@ -63,12 +68,15 @@ static int device_open(struct inode *inode, struct file *file)
 	/* Synchronization */
 	lockamp->last_desyncs = atomic_read(&lockamp->desyncs);
 	reset_start_time(lockamp);
+	mutex_unlock(&lockamp->reload_m);
 	return 0;
 
 out_pm:
 	lockamp_pm_put(lockamp);
 out_open_count:
-	--open_count;
+	--lockamp->open_count;
+out_unlock:
+	mutex_unlock(&lockamp->reload_m);
 	return ret;
 }
 
@@ -78,7 +86,9 @@ static int device_release(struct inode *inode, struct file *file)
 	lockamp = container_of(inode->i_cdev, struct lockamp, cdev);
 	lockamp_stream_stop(lockamp);
 	lockamp_pm_put(lockamp);
-	--open_count;
+	mutex_lock(&lockamp->reload_m);
+	--lockamp->open_count;
+	mutex_unlock(&lockamp->reload_m);
 	return 0;
 }
 

@@ -24,8 +24,10 @@
 #include <linux/dma-mapping.h>
 #include <linux/dmaengine.h>
 #include <linux/fb.h>
+#include <linux/fpga/fpga-mgr.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -77,6 +79,12 @@ struct sbt_ssd2119 {
 	unsigned int dirty_start;
 	unsigned int dirty_end;
 	u32 pseudo_palette[16];
+	struct backlight_device *backlight;
+	/* Across a reload of the FPGA image (sbt/drupe#55) */
+	struct fpga_mgr_pl_hook pl_hook;
+	bool paused; /* under defio.lock */
+	u32 div; /* the engine's DIV while paused */
+	ktime_t paused_at;
 };
 
 static u32 engine_read(struct sbt_ssd2119 *par, unsigned int reg)
@@ -212,6 +220,10 @@ static void sbt_ssd2119_deferred_io(struct fb_info *info,
 	struct fb_deferred_io_pageref *pageref;
 	unsigned int start, end;
 
+	/* Resuming sends the whole screen */
+	if (par->paused)
+		return;
+
 	spin_lock(&par->dirty_lock);
 	start = par->dirty_start;
 	end = par->dirty_end;
@@ -296,8 +308,12 @@ static ssize_t sck_divider_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct sbt_ssd2119 *par = dev_get_drvdata(dev);
+	u32 div;
 
-	return sysfs_emit(buf, "0x%04x\n", engine_read(par, ENGINE_DIV) & 0xffff);
+	mutex_lock(&par->defio.lock);
+	div = par->paused ? par->div : engine_read(par, ENGINE_DIV);
+	mutex_unlock(&par->defio.lock);
+	return sysfs_emit(buf, "0x%04x\n", div & 0xffff);
 }
 
 static ssize_t sck_divider_store(struct device *dev,
@@ -313,7 +329,10 @@ static ssize_t sck_divider_store(struct device *dev,
 		return ret;
 	/* Not while an update runs: deferred I/O holds its lock across one */
 	mutex_lock(&par->defio.lock);
-	engine_write(par, ENGINE_DIV, div);
+	if (par->paused)
+		par->div = div;
+	else
+		engine_write(par, ENGINE_DIV, div);
 	mutex_unlock(&par->defio.lock);
 	return count;
 }
@@ -330,6 +349,83 @@ static struct attribute *sbt_ssd2119_attrs[] = {
 	NULL
 };
 ATTRIBUTE_GROUPS(sbt_ssd2119);
+
+/*
+ * A full reload of the FPGA image resets the engine and its DMA, and an access
+ * while it loads never completes. So the driver stops sending, and keeps
+ * /dev/fb0 and its memory: dash goes on drawing into it, and the panel holds
+ * its last frame. After the reload it sets the engine up again and sends the
+ * whole screen.
+ *
+ * The backlight's PWM is in the FPGA image too. Its lock keeps brightness
+ * changes out until the reload is over.
+ */
+static int sbt_ssd2119_pl_pause(struct fpga_mgr_pl_hook *hook)
+{
+	struct sbt_ssd2119 *par = container_of(hook, struct sbt_ssd2119, pl_hook);
+
+	if (par->backlight)
+		mutex_lock(&par->backlight->ops_lock);
+	/* Deferred I/O holds this lock across an update */
+	mutex_lock(&par->defio.lock);
+	par->paused = true;
+	par->div = engine_read(par, ENGINE_DIV);
+	mutex_unlock(&par->defio.lock);
+	/*
+	 * Released, so that requesting it again sets the DMA's interrupts up
+	 * after the reload. The DMA itself stays bound, so the framebuffer's
+	 * mapping stays valid.
+	 */
+	dmaengine_terminate_sync(par->chan);
+	dma_release_channel(par->chan);
+	par->chan = NULL;
+	par->paused_at = ktime_get();
+	return 0;
+}
+
+/*
+ * The PWM core skips a state it already holds, and the reload stopped the
+ * timer. Blanking and unblanking makes pwm-backlight write it again.
+ */
+static void sbt_ssd2119_backlight_restore(struct backlight_device *backlight)
+{
+	int power = backlight->props.power;
+
+	backlight->props.power = FB_BLANK_POWERDOWN;
+	backlight_update_status(backlight);
+	backlight->props.power = power;
+	backlight_update_status(backlight);
+}
+
+static void sbt_ssd2119_pl_resume(struct fpga_mgr_pl_hook *hook)
+{
+	struct sbt_ssd2119 *par = container_of(hook, struct sbt_ssd2119, pl_hook);
+	struct dma_chan *chan;
+
+	chan = dma_request_chan(par->dev, "tx");
+	mutex_lock(&par->defio.lock);
+	if (IS_ERR(chan)) {
+		dev_err(par->dev, "cannot get the pixel DMA channel back: %ld\n",
+			PTR_ERR(chan));
+	} else if (chan->device->dev != par->dma_dev) {
+		dev_err(par->dev, "the pixel DMA channel moved to another DMA\n");
+		dma_release_channel(chan);
+	} else {
+		par->chan = chan;
+		engine_write(par, ENGINE_DIV, par->div);
+		engine_reset(par);
+		par->paused = false;
+		sbt_ssd2119_update(par, 0, SSD2119_HEIGHT - 1);
+	}
+	mutex_unlock(&par->defio.lock);
+	if (par->backlight) {
+		sbt_ssd2119_backlight_restore(par->backlight);
+		mutex_unlock(&par->backlight->ops_lock);
+	}
+	if (!par->paused)
+		dev_info(par->dev, "the screen held its frame for %lld ms\n",
+			 ktime_ms_delta(ktime_get(), par->paused_at));
+}
 
 static int sbt_ssd2119_probe(struct platform_device *pdev)
 {
@@ -438,6 +534,11 @@ static int sbt_ssd2119_probe(struct platform_device *pdev)
 		backlight->props.power = FB_BLANK_UNBLANK;
 		backlight_update_status(backlight);
 	}
+	par->backlight = backlight;
+	par->pl_hook.pause = sbt_ssd2119_pl_pause;
+	par->pl_hook.resume = sbt_ssd2119_pl_resume;
+	par->pl_hook.priority = FPGA_MGR_PL_HOOK_CONSUMER;
+	fpga_mgr_pl_hook_register(&par->pl_hook);
 	dev_info(dev, "fb%d: %ux%u, pixels by DMA, SCK divider 0x%04x\n",
 		 info->node, SSD2119_WIDTH, SSD2119_HEIGHT,
 		 engine_read(par, ENGINE_DIV) & 0xffff);
@@ -469,14 +570,18 @@ static int sbt_ssd2119_remove(struct platform_device *pdev)
 	struct sbt_ssd2119 *par = platform_get_drvdata(pdev);
 	struct fb_info *info = par->info;
 
+	fpga_mgr_pl_hook_unregister(&par->pl_hook);
 	unregister_framebuffer(info);
 	fb_deferred_io_cleanup(info);
-	dmaengine_terminate_sync(par->chan);
+	/* None if it could not be had back after a reload */
+	if (par->chan)
+		dmaengine_terminate_sync(par->chan);
 	engine_write(par, ENGINE_CTRL, ENGINE_CTRL_FLUSH);
 	dma_unmap_single(par->dma_dev, par->vmem_dma, SSD2119_VMEM_SIZE,
 			 DMA_TO_DEVICE);
 	free_pages_exact(par->vmem, SSD2119_VMEM_SIZE);
-	dma_release_channel(par->chan);
+	if (par->chan)
+		dma_release_channel(par->chan);
 	framebuffer_release(info);
 	return 0;
 }

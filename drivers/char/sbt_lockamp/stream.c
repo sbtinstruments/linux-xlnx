@@ -458,5 +458,7 @@ void lockamp_stream_exit(struct lockamp *lockamp)
 	for (i = 0; i < LOCKAMP_STREAM_BUFS; ++i)
 		lockamp_buf_free(s, &s->bufs[i]);
 	lockamp_buf_free(s, &s->discard);
-	dma_release_channel(s->chan);
+	/* None if a reload of the FPGA image could not give it back */
+	if (s->chan)
+		dma_release_channel(s->chan);
 }

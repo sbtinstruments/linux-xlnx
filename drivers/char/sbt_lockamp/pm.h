@@ -6,6 +6,7 @@
 #include "lockin_amplifier.h"
 
 int lockamp_amp_supply_set(struct lockamp *lockamp, bool on);
+void lockamp_pl_hook_register(struct lockamp *lockamp);
 
 static inline int lockamp_pm_get(struct lockamp *lockamp)
 {

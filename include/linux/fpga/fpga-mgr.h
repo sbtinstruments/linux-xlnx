@@ -283,6 +283,48 @@ struct fpga_manager *
 devm_fpga_mgr_register(struct device *parent, const char *name,
 		       const struct fpga_manager_ops *mops, void *priv);
 
+/**
+ * struct fpga_mgr_pl_hook - keeps a PL driver alive across a full reconfiguration
+ * @pause: stop every access to the PL. A non-zero return refuses the
+ *	   reconfiguration: the hooks already paused are resumed, and the load
+ *	   fails with that error before the PL is touched.
+ * @resume: the PL is back, at its reset values. Re-initialise the hardware
+ *	    and allow access again. Also called if the load failed.
+ * @priority: higher pauses first and resumes last, so consumers pause
+ *	      before the buses they use and resume after them
+ * @node: internal
+ *
+ * A full reconfiguration resets every IP in the PL, and while it runs an
+ * access to the PL never completes. The hooks run around the write of every
+ * full (not partial) image, from the same call, so a hook may hold a lock
+ * from @pause to @resume.
+ */
+struct fpga_mgr_pl_hook {
+	int (*pause)(struct fpga_mgr_pl_hook *hook);
+	void (*resume)(struct fpga_mgr_pl_hook *hook);
+	int priority;
+	struct list_head node;
+};
+
+/* For a hook's priority */
+#define FPGA_MGR_PL_HOOK_BUS		0
+#define FPGA_MGR_PL_HOOK_CONSUMER	10
+
+#if IS_REACHABLE(CONFIG_FPGA)
+void fpga_mgr_pl_hook_register(struct fpga_mgr_pl_hook *hook);
+void fpga_mgr_pl_hook_unregister(struct fpga_mgr_pl_hook *hook);
+int devm_fpga_mgr_pl_hook_register(struct device *dev,
+				   struct fpga_mgr_pl_hook *hook);
+#else
+static inline void fpga_mgr_pl_hook_register(struct fpga_mgr_pl_hook *hook) {}
+static inline void fpga_mgr_pl_hook_unregister(struct fpga_mgr_pl_hook *hook) {}
+static inline int devm_fpga_mgr_pl_hook_register(struct device *dev,
+						 struct fpga_mgr_pl_hook *hook)
+{
+	return 0;
+}
+#endif
+
 #define FPGA_IOCTL_LOAD_DMA_BUFF	_IOWR('R', 1, __u32)
 
 #endif /*_LINUX_FPGA_MGR_H */

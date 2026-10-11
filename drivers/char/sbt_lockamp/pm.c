@@ -129,6 +129,81 @@ static int lockamp_pm_runtime_resume(struct device *dev)
 	return 0;
 }
 
+/*
+ * A full reload of the FPGA image resets the lock-in amplifier and its DMA,
+ * and an access while it loads never completes. Refuse while a reader
+ * streams. Otherwise hold opens and runtime PM off, keep register writes in
+ * the cache, and give back the DMA channel. After the reload, put the
+ * registers back as lockamp_pm_runtime_resume() does after a power off.
+ */
+static int lockamp_pl_pause(struct fpga_mgr_pl_hook *hook)
+{
+	struct lockamp *lockamp = container_of(hook, struct lockamp, pl_hook);
+	struct lockamp_stream *s = &lockamp->stream;
+
+	mutex_lock(&lockamp->reload_m);
+	if (lockamp->open_count) {
+		mutex_unlock(&lockamp->reload_m);
+		dev_warn(lockamp->dev, "Streaming: no reload of the FPGA image\n");
+		return -EBUSY;
+	}
+	mutex_lock(&lockamp->adc_buf_m);
+	/* Waits for a suspend in progress; the converters stay as they are */
+	pm_runtime_disable(lockamp->dev->parent);
+	regcache_cache_only(lockamp->regmap, true);
+	/* Released, so that requesting it again sets the DMA's interrupts up */
+	dma_release_channel(s->chan);
+	s->chan = NULL;
+	return 0;
+}
+
+static void lockamp_pl_resume(struct fpga_mgr_pl_hook *hook)
+{
+	struct lockamp *lockamp = container_of(hook, struct lockamp, pl_hook);
+	struct device *dev = lockamp->dev->parent;
+	struct lockamp_stream *s = &lockamp->stream;
+	struct dma_chan *chan;
+	int ret;
+
+	chan = dma_request_chan(dev, "rx");
+	if (IS_ERR(chan)) {
+		dev_err(lockamp->dev, "Cannot get the 'rx' DMA channel back: %ld\n",
+			PTR_ERR(chan));
+	} else if (dmaengine_get_dma_device(chan) != s->dma_dev) {
+		dev_err(lockamp->dev, "The 'rx' DMA channel moved to another DMA\n");
+		dma_release_channel(chan);
+	} else {
+		s->chan = chan;
+	}
+
+	regcache_cache_only(lockamp->regmap, false);
+	regcache_mark_dirty(lockamp->regmap);
+	/* Suspended, the next runtime resume resets and syncs */
+	if (!pm_runtime_suspended(dev)) {
+		/* The ADC's clock starts again with the image (sbt/drupe#52) */
+		msleep(LOCKAMP_RELOAD_CLOCK_MS);
+		lockamp_reset(lockamp);
+		ret = regcache_sync(lockamp->regmap);
+		if (ret < 0)
+			dev_err(lockamp->dev, "Failed to sync regmap cache after a reload: %d\n",
+				ret);
+	}
+	pm_runtime_enable(dev);
+	pm_runtime_mark_last_busy(dev);
+	pm_request_autosuspend(dev);
+	mutex_unlock(&lockamp->adc_buf_m);
+	mutex_unlock(&lockamp->reload_m);
+}
+
+void lockamp_pl_hook_register(struct lockamp *lockamp)
+{
+	lockamp->pl_hook.pause = lockamp_pl_pause;
+	lockamp->pl_hook.resume = lockamp_pl_resume;
+	/* Ahead of the other consumers, so its refusal pauses nothing */
+	lockamp->pl_hook.priority = FPGA_MGR_PL_HOOK_CONSUMER + 1;
+	fpga_mgr_pl_hook_register(&lockamp->pl_hook);
+}
+
 struct dev_pm_ops lockamp_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(lockamp_pm_suspend, NULL)
 	SET_RUNTIME_PM_OPS(lockamp_pm_runtime_suspend,

@@ -185,6 +185,7 @@ static int lockamp_probe(struct platform_device *pdev)
 	lockamp_reset(lockamp);
 
 	mutex_init(&lockamp->adc_buf_m);
+	mutex_init(&lockamp->reload_m);
 
 	/* Sample stream (DMA channel and signal buffer) */
 	ret = lockamp_stream_init(lockamp, &pdev->dev);
@@ -301,6 +302,8 @@ static int lockamp_probe(struct platform_device *pdev)
 		goto out_pm_get;
 	}
 
+	lockamp_pl_hook_register(lockamp);
+
 	/* Welcome message */
 	dev_info(lockamp->dev, "Probe success (hw_version:%x)\n", version);
 
@@ -326,6 +329,8 @@ out_stream:
 static int lockamp_remove(struct platform_device *pdev)
 {
 	struct lockamp *lockamp = platform_get_drvdata(pdev);
+
+	fpga_mgr_pl_hook_unregister(&lockamp->pl_hook);
 	pm_runtime_disable(&pdev->dev);
 	lockamp_amp_supply_set(lockamp, false); /* ignore return value */
 	device_destroy(lockamp_class, lockamp->chrdev_no);

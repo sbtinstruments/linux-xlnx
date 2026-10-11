@@ -10,6 +10,7 @@
 #include <linux/cdev.h>
 #include <linux/completion.h>
 #include <linux/dmaengine.h>
+#include <linux/fpga/fpga-mgr.h>
 #include <linux/sizes.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
@@ -108,6 +109,13 @@ struct lockamp {
 	atomic_t desyncs;
 	int last_desyncs;
 	u64 last_start_time_ns;
+
+	/* Readers of the character device: one at the most */
+	unsigned int open_count;
+	/* Guards open_count, and holds opens off across a reload */
+	struct mutex reload_m;
+	/* Pauses the driver across a reload of the FPGA image */
+	struct fpga_mgr_pl_hook pl_hook;
 };
 
 struct site_sample {

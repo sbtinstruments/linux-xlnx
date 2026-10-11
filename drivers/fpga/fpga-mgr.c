@@ -24,6 +24,112 @@
 static DEFINE_IDA(fpga_mgr_ida);
 static struct class *fpga_mgr_class;
 
+/*
+ * Every PL driver's hook, highest priority first. Held from the first pause
+ * to the last resume of a reconfiguration.
+ */
+static LIST_HEAD(fpga_mgr_pl_hooks);
+static DEFINE_MUTEX(fpga_mgr_pl_hooks_lock);
+
+/**
+ * fpga_mgr_pl_hook_register - pause and resume a PL driver around full
+ * reconfigurations
+ * @hook: the driver's hook
+ *
+ * Zynq-7000 and its kind have one PL, so the hooks run around a full
+ * reconfiguration by any FPGA manager.
+ */
+void fpga_mgr_pl_hook_register(struct fpga_mgr_pl_hook *hook)
+{
+	struct fpga_mgr_pl_hook *pos;
+
+	mutex_lock(&fpga_mgr_pl_hooks_lock);
+	list_for_each_entry(pos, &fpga_mgr_pl_hooks, node)
+		if (pos->priority < hook->priority)
+			break;
+	list_add_tail(&hook->node, &pos->node);
+	mutex_unlock(&fpga_mgr_pl_hooks_lock);
+}
+EXPORT_SYMBOL_GPL(fpga_mgr_pl_hook_register);
+
+/**
+ * fpga_mgr_pl_hook_unregister - stop pausing a PL driver
+ * @hook: the hook fpga_mgr_pl_hook_register() took
+ *
+ * Waits for a reconfiguration in progress to finish.
+ */
+void fpga_mgr_pl_hook_unregister(struct fpga_mgr_pl_hook *hook)
+{
+	mutex_lock(&fpga_mgr_pl_hooks_lock);
+	list_del(&hook->node);
+	mutex_unlock(&fpga_mgr_pl_hooks_lock);
+}
+EXPORT_SYMBOL_GPL(fpga_mgr_pl_hook_unregister);
+
+static void devm_fpga_mgr_pl_hook_unregister(void *hook)
+{
+	fpga_mgr_pl_hook_unregister(hook);
+}
+
+/**
+ * devm_fpga_mgr_pl_hook_register - resource managed fpga_mgr_pl_hook_register()
+ * @dev: the device whose unbind unregisters @hook
+ * @hook: the driver's hook
+ *
+ * Return: 0 on success, negative error code otherwise.
+ */
+int devm_fpga_mgr_pl_hook_register(struct device *dev,
+				   struct fpga_mgr_pl_hook *hook)
+{
+	fpga_mgr_pl_hook_register(hook);
+	return devm_add_action_or_reset(dev, devm_fpga_mgr_pl_hook_unregister,
+					hook);
+}
+EXPORT_SYMBOL_GPL(devm_fpga_mgr_pl_hook_register);
+
+/*
+ * Pauses every PL driver before a full reconfiguration. On success the hooks
+ * stay locked until fpga_mgr_resume_pl().
+ */
+static int fpga_mgr_pause_pl(struct fpga_manager *mgr,
+			     struct fpga_image_info *info)
+{
+	struct fpga_mgr_pl_hook *hook;
+	int ret;
+
+	if (info->flags & FPGA_MGR_PARTIAL_RECONFIG)
+		return 0;
+
+	mutex_lock(&fpga_mgr_pl_hooks_lock);
+	list_for_each_entry(hook, &fpga_mgr_pl_hooks, node) {
+		ret = hook->pause(hook);
+		if (ret) {
+			dev_err(&mgr->dev,
+				"a PL driver refused the reconfiguration: %d\n",
+				ret);
+			list_for_each_entry_continue_reverse(hook,
+							     &fpga_mgr_pl_hooks,
+							     node)
+				hook->resume(hook);
+			mutex_unlock(&fpga_mgr_pl_hooks_lock);
+			return ret;
+		}
+	}
+	return 0;
+}
+
+static void fpga_mgr_resume_pl(struct fpga_image_info *info)
+{
+	struct fpga_mgr_pl_hook *hook;
+
+	if (info->flags & FPGA_MGR_PARTIAL_RECONFIG)
+		return;
+
+	list_for_each_entry_reverse(hook, &fpga_mgr_pl_hooks, node)
+		hook->resume(hook);
+	mutex_unlock(&fpga_mgr_pl_hooks_lock);
+}
+
 struct fpga_mgr_devres {
 	struct fpga_manager *mgr;
 };
@@ -349,7 +455,7 @@ static int fpga_mgr_prepare_sg(struct fpga_manager *mgr,
 }
 
 /**
- * fpga_mgr_buf_load_sg - load fpga from image in buffer from a scatter list
+ * __fpga_mgr_buf_load_sg - load fpga from image in buffer from a scatter list
  * @mgr:	fpga manager
  * @info:	fpga image specific information
  * @sgt:	scatterlist table
@@ -365,9 +471,9 @@ static int fpga_mgr_prepare_sg(struct fpga_manager *mgr,
  *
  * Return: 0 on success, negative error code otherwise.
  */
-static int fpga_mgr_buf_load_sg(struct fpga_manager *mgr,
-				struct fpga_image_info *info,
-				struct sg_table *sgt)
+static int __fpga_mgr_buf_load_sg(struct fpga_manager *mgr,
+				  struct fpga_image_info *info,
+				  struct sg_table *sgt)
 {
 	int ret;
 
@@ -423,9 +529,23 @@ out:
 	return fpga_mgr_write_complete(mgr, info);
 }
 
-static int fpga_mgr_buf_load_mapped(struct fpga_manager *mgr,
-				    struct fpga_image_info *info,
-				    const char *buf, size_t count)
+static int fpga_mgr_buf_load_sg(struct fpga_manager *mgr,
+				struct fpga_image_info *info,
+				struct sg_table *sgt)
+{
+	int ret;
+
+	ret = fpga_mgr_pause_pl(mgr, info);
+	if (ret)
+		return ret;
+	ret = __fpga_mgr_buf_load_sg(mgr, info, sgt);
+	fpga_mgr_resume_pl(info);
+	return ret;
+}
+
+static int __fpga_mgr_buf_load_mapped(struct fpga_manager *mgr,
+				      struct fpga_image_info *info,
+				      const char *buf, size_t count)
 {
 	int ret;
 
@@ -459,6 +579,20 @@ static int fpga_mgr_buf_load_mapped(struct fpga_manager *mgr,
 	}
 
 	return fpga_mgr_write_complete(mgr, info);
+}
+
+static int fpga_mgr_buf_load_mapped(struct fpga_manager *mgr,
+				    struct fpga_image_info *info,
+				    const char *buf, size_t count)
+{
+	int ret;
+
+	ret = fpga_mgr_pause_pl(mgr, info);
+	if (ret)
+		return ret;
+	ret = __fpga_mgr_buf_load_mapped(mgr, info, buf, count);
+	fpga_mgr_resume_pl(info);
+	return ret;
 }
 
 /**

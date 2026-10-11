@@ -21,6 +21,7 @@
 #include <linux/delay.h>
 #include <linux/pm_runtime.h>
 #include <linux/clk.h>
+#include <linux/fpga/fpga-mgr.h>
 #define XILINX_SPI_MAX_CS	32
 
 #define XILINX_SPI_NAME "xilinx_spi"
@@ -112,6 +113,8 @@
  * @rx_bus_width:	Number of wires used to receive data
  * @tx_fifo:		For writing data to fifo
  * @rx_fifo:		For reading data from fifo
+ * @master:		The SPI master this instance drives
+ * @pl_hook:		Holds the bus across a reload of the FPGA image
  */
 struct xilinx_spi {
 	void __iomem	*regs;	/* virt. address of the control registers */
@@ -134,6 +137,8 @@ struct xilinx_spi {
 	u32 rx_bus_width;
 	void (*tx_fifo)(struct xilinx_spi *xqspi);
 	void (*rx_fifo)(struct xilinx_spi *xqspi);
+	struct spi_master *master;
+	struct fpga_mgr_pl_hook pl_hook;
 };
 
 /**
@@ -599,6 +604,32 @@ static int __maybe_unused xilinx_spi_suspend(struct device *dev)
 	return ret;
 }
 
+/*
+ * A full reload of the FPGA image resets the controller, and an access while
+ * it loads never completes. Hold the bus so no message starts, then set the
+ * controller up again.
+ */
+static int xilinx_spi_pl_pause(struct fpga_mgr_pl_hook *hook)
+{
+	struct xilinx_spi *xspi = container_of(hook, struct xilinx_spi, pl_hook);
+
+	return spi_bus_lock(xspi->master);
+}
+
+static void xilinx_spi_pl_resume(struct fpga_mgr_pl_hook *hook)
+{
+	struct xilinx_spi *xspi = container_of(hook, struct xilinx_spi, pl_hook);
+
+	if (pm_runtime_resume_and_get(xspi->dev) == 0) {
+		xspi_init_hw(xspi);
+		pm_runtime_mark_last_busy(xspi->dev);
+		pm_runtime_put_autosuspend(xspi->dev);
+	} else {
+		dev_err(xspi->dev, "cannot set up the controller after a reload\n");
+	}
+	spi_bus_unlock(xspi->master);
+}
+
 static const struct dev_pm_ops xilinx_spi_dev_pm_ops = {
 	SET_RUNTIME_PM_OPS(xilinx_spi_runtime_suspend,
 			   xilinx_spi_runtime_resume, NULL)
@@ -864,6 +895,12 @@ static int xilinx_spi_probe(struct platform_device *pdev)
 		goto clk_unprepare_all;
 	}
 
+	xspi->master = master;
+	xspi->pl_hook.pause = xilinx_spi_pl_pause;
+	xspi->pl_hook.resume = xilinx_spi_pl_resume;
+	xspi->pl_hook.priority = FPGA_MGR_PL_HOOK_BUS;
+	fpga_mgr_pl_hook_register(&xspi->pl_hook);
+
 	return ret;
 
 clk_unprepare_all:
@@ -895,6 +932,8 @@ static int xilinx_spi_remove(struct platform_device *pdev)
 	struct spi_master *master = platform_get_drvdata(pdev);
 	struct xilinx_spi *xspi = spi_master_get_devdata(master);
 	void __iomem *regs_base = xspi->regs;
+
+	fpga_mgr_pl_hook_unregister(&xspi->pl_hook);
 
 	/* Disable all the interrupts just in case */
 	xspi->write_fn(0, regs_base + XIPIF_V123B_IIER_OFFSET);
