@@ -6,9 +6,16 @@
  * The engine sits between the panel's 4-wire SPI pins and the AXI Quad SPI
  * that used to drive them alone. Once this driver sets its "own" bit, the
  * engine drives the pins: register writes go through its command FIFO, and
- * pixels come straight from the framebuffer by an AXI DMA (MM2S) channel. So
- * no CPU work is spent per byte. The engine sends each RGB565 pixel high byte
- * first, so the DMA reads the framebuffer as it lies in memory.
+ * pixels go by an AXI DMA (MM2S) channel. The engine sends each RGB565 pixel
+ * high byte first, so the DMA reads the pixels as they lie in memory.
+ *
+ * The display is double buffered (sbt/drupe#59). An update copies the dirty
+ * lines into the DMA's own buffer, starts the DMA and returns without waiting
+ * for it. That releases deferred I/O's lock, so an application draws the next
+ * frame into the framebuffer while the panel takes this one. The next update
+ * first waits for this transfer to end, so the DMA's buffer never changes
+ * under it. The copy runs under deferred I/O's lock, with every framebuffer
+ * page write-protected, so it is a whole snapshot of what mmap writers drew.
  *
  * The panel keeps what U-Boot set up: this driver never resets it, never
  * runs its init sequence and never clears it, as fb_ssd2119 did with
@@ -73,8 +80,13 @@ struct sbt_ssd2119 {
 	struct dma_chan *chan;
 	struct device *dma_dev;
 	void *vmem;
-	dma_addr_t vmem_dma;
+	void *dmabuf; /* what the DMA reads: a copy of vmem's dirty lines */
+	dma_addr_t dmabuf_dma;
 	struct completion done;
+	/* The transfer in flight, under defio.lock */
+	bool sending;
+	size_t sending_len;
+	u32 sending_count; /* ENGINE_COUNT before it */
 	spinlock_t dirty_lock; /* the dirty lines that fb ops mark */
 	unsigned int dirty_start;
 	unsigned int dirty_end;
@@ -140,43 +152,16 @@ static void sbt_ssd2119_dma_done(void *data)
 	complete(&par->done);
 }
 
-/* Send lines @start to @end, both included, to the panel */
-static void sbt_ssd2119_update(struct sbt_ssd2119 *par, unsigned int start,
-			       unsigned int end)
+/* Wait for the transfer in flight, if any, to end. Under defio.lock. */
+static void sbt_ssd2119_finish(struct sbt_ssd2119 *par)
 {
-	size_t offset = start * SSD2119_LINE_LENGTH;
-	size_t len = (end - start + 1) * SSD2119_LINE_LENGTH;
-	struct dma_async_tx_descriptor *desc;
+	size_t len = par->sending_len;
 	unsigned long timeout;
-	dma_cookie_t cookie;
 	u32 count;
 
-	/* Three registers of four bytes each fit the FIFO */
-	engine_write_reg(par, SSD2119_REG_X, 0);
-	engine_write_reg(par, SSD2119_REG_Y, start);
-	engine_write_reg(par, SSD2119_REG_GRAM, 0);
-	if (engine_wait_idle(par, 12))
-		goto reset;
-
-	dma_sync_single_for_device(par->dma_dev, par->vmem_dma + offset, len,
-				   DMA_TO_DEVICE);
-	desc = dmaengine_prep_slave_single(par->chan, par->vmem_dma + offset,
-					   len, DMA_MEM_TO_DEV,
-					   DMA_PREP_INTERRUPT);
-	if (!desc) {
-		dev_err_ratelimited(par->dev, "cannot prepare the pixel DMA\n");
+	if (!par->sending)
 		return;
-	}
-	reinit_completion(&par->done);
-	desc->callback = sbt_ssd2119_dma_done;
-	desc->callback_param = par;
-	count = engine_read(par, ENGINE_COUNT);
-	cookie = dmaengine_submit(desc);
-	if (dma_submit_error(cookie)) {
-		dev_err_ratelimited(par->dev, "cannot submit the pixel DMA\n");
-		return;
-	}
-	dma_async_issue_pending(par->chan);
+	par->sending = false;
 
 	timeout = usecs_to_jiffies(engine_timeout_us(par, len));
 	if (!wait_for_completion_timeout(&par->done, timeout)) {
@@ -187,7 +172,7 @@ static void sbt_ssd2119_update(struct sbt_ssd2119 *par, unsigned int start,
 	/* The DMA is done once the engine took the last word, not sent it */
 	if (engine_wait_idle(par, 4))
 		goto reset;
-	count = engine_read(par, ENGINE_COUNT) - count;
+	count = engine_read(par, ENGINE_COUNT) - par->sending_count;
 	if (count != len)
 		dev_err_ratelimited(par->dev, "the engine sent %u of %zu bytes\n",
 				    count, len);
@@ -195,6 +180,53 @@ static void sbt_ssd2119_update(struct sbt_ssd2119 *par, unsigned int start,
 
 reset:
 	engine_reset(par);
+}
+
+/*
+ * Start sending lines @start to @end, both included, to the panel. Under
+ * defio.lock. It returns once the DMA runs; sbt_ssd2119_finish waits for it.
+ */
+static void sbt_ssd2119_update(struct sbt_ssd2119 *par, unsigned int start,
+			       unsigned int end)
+{
+	size_t offset = start * SSD2119_LINE_LENGTH;
+	size_t len = (end - start + 1) * SSD2119_LINE_LENGTH;
+	struct dma_async_tx_descriptor *desc;
+	dma_cookie_t cookie;
+
+	sbt_ssd2119_finish(par);
+
+	/* Three registers of four bytes each fit the FIFO */
+	engine_write_reg(par, SSD2119_REG_X, 0);
+	engine_write_reg(par, SSD2119_REG_Y, start);
+	engine_write_reg(par, SSD2119_REG_GRAM, 0);
+	if (engine_wait_idle(par, 12)) {
+		engine_reset(par);
+		return;
+	}
+
+	memcpy(par->dmabuf + offset, par->vmem + offset, len);
+	dma_sync_single_for_device(par->dma_dev, par->dmabuf_dma + offset, len,
+				   DMA_TO_DEVICE);
+	desc = dmaengine_prep_slave_single(par->chan, par->dmabuf_dma + offset,
+					   len, DMA_MEM_TO_DEV,
+					   DMA_PREP_INTERRUPT);
+	if (!desc) {
+		dev_err_ratelimited(par->dev, "cannot prepare the pixel DMA\n");
+		return;
+	}
+	reinit_completion(&par->done);
+	desc->callback = sbt_ssd2119_dma_done;
+	desc->callback_param = par;
+	par->sending_count = engine_read(par, ENGINE_COUNT);
+	cookie = dmaengine_submit(desc);
+	if (dma_submit_error(cookie)) {
+		dev_err_ratelimited(par->dev, "cannot submit the pixel DMA\n");
+		return;
+	}
+	dma_async_issue_pending(par->chan);
+	par->sending = true;
+	par->sending_len = len;
 }
 
 static void sbt_ssd2119_mkdirty(struct fb_info *info, unsigned int y,
@@ -327,12 +359,14 @@ static ssize_t sck_divider_store(struct device *dev,
 	ret = kstrtou16(buf, 0, &div);
 	if (ret)
 		return ret;
-	/* Not while an update runs: deferred I/O holds its lock across one */
+	/* Not while a transfer runs */
 	mutex_lock(&par->defio.lock);
-	if (par->paused)
+	if (par->paused) {
 		par->div = div;
-	else
+	} else {
+		sbt_ssd2119_finish(par);
 		engine_write(par, ENGINE_DIV, div);
+	}
 	mutex_unlock(&par->defio.lock);
 	return count;
 }
@@ -366,8 +400,9 @@ static int sbt_ssd2119_pl_pause(struct fpga_mgr_pl_hook *hook)
 
 	if (par->backlight)
 		mutex_lock(&par->backlight->ops_lock);
-	/* Deferred I/O holds this lock across an update */
+	/* Deferred I/O holds this lock across an update's start */
 	mutex_lock(&par->defio.lock);
+	sbt_ssd2119_finish(par);
 	par->paused = true;
 	par->div = engine_read(par, ENGINE_DIV);
 	mutex_unlock(&par->defio.lock);
@@ -480,11 +515,16 @@ static int sbt_ssd2119_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err_dma;
 	}
-	par->vmem_dma = dma_map_single(par->dma_dev, par->vmem,
-				       SSD2119_VMEM_SIZE, DMA_TO_DEVICE);
-	if (dma_mapping_error(par->dma_dev, par->vmem_dma)) {
+	par->dmabuf = alloc_pages_exact(SSD2119_VMEM_SIZE, GFP_KERNEL | __GFP_ZERO);
+	if (!par->dmabuf) {
 		ret = -ENOMEM;
 		goto err_vmem;
+	}
+	par->dmabuf_dma = dma_map_single(par->dma_dev, par->dmabuf,
+					 SSD2119_VMEM_SIZE, DMA_TO_DEVICE);
+	if (dma_mapping_error(par->dma_dev, par->dmabuf_dma)) {
+		ret = -ENOMEM;
+		goto err_dmabuf;
 	}
 
 	info->fbops = &sbt_ssd2119_ops;
@@ -548,8 +588,10 @@ err_defio:
 	fb_deferred_io_cleanup(info);
 	engine_write(par, ENGINE_CTRL, ENGINE_CTRL_FLUSH);
 err_unmap:
-	dma_unmap_single(par->dma_dev, par->vmem_dma, SSD2119_VMEM_SIZE,
+	dma_unmap_single(par->dma_dev, par->dmabuf_dma, SSD2119_VMEM_SIZE,
 			 DMA_TO_DEVICE);
+err_dmabuf:
+	free_pages_exact(par->dmabuf, SSD2119_VMEM_SIZE);
 err_vmem:
 	free_pages_exact(par->vmem, SSD2119_VMEM_SIZE);
 err_dma:
@@ -574,11 +616,14 @@ static int sbt_ssd2119_remove(struct platform_device *pdev)
 	unregister_framebuffer(info);
 	fb_deferred_io_cleanup(info);
 	/* None if it could not be had back after a reload */
-	if (par->chan)
+	if (par->chan) {
+		sbt_ssd2119_finish(par);
 		dmaengine_terminate_sync(par->chan);
+	}
 	engine_write(par, ENGINE_CTRL, ENGINE_CTRL_FLUSH);
-	dma_unmap_single(par->dma_dev, par->vmem_dma, SSD2119_VMEM_SIZE,
+	dma_unmap_single(par->dma_dev, par->dmabuf_dma, SSD2119_VMEM_SIZE,
 			 DMA_TO_DEVICE);
+	free_pages_exact(par->dmabuf, SSD2119_VMEM_SIZE);
 	free_pages_exact(par->vmem, SSD2119_VMEM_SIZE);
 	if (par->chan)
 		dma_release_channel(par->chan);
