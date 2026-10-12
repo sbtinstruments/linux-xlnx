@@ -71,6 +71,8 @@
 #define SSD2119_REG_GRAM	0x22
 
 #define SBT_SSD2119_FPS		50
+/* 50 MHz, the engine's fastest: the panel takes it (sbt/drupe#59) */
+#define SBT_SSD2119_DIV		0x0000
 
 struct sbt_ssd2119 {
 	struct device *dev;
@@ -374,7 +376,9 @@ static ssize_t sck_divider_store(struct device *dev,
 /*
  * The engine's DIV register: bits 7:0 are the cycles of 100 MHz that SCL
  * stays high, less one; bits 15:8 the cycles it stays low, less one. The
- * engine's default, 0x0303, is 12.5 MHz, the Quad SPI's rate.
+ * engine's own default, 0x0303, is 12.5 MHz, the Quad SPI's rate. This
+ * driver sets SBT_SSD2119_DIV, unless the device tree's "sbt,sck-divider"
+ * says otherwise.
  */
 static DEVICE_ATTR_RW(sck_divider);
 
@@ -561,8 +565,9 @@ static int sbt_ssd2119_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_unmap;
 
-	if (!of_property_read_u32(dev->of_node, "sbt,sck-divider", &div))
-		engine_write(par, ENGINE_DIV, div & 0xffff);
+	if (of_property_read_u32(dev->of_node, "sbt,sck-divider", &div))
+		div = SBT_SSD2119_DIV;
+	engine_write(par, ENGINE_DIV, div & 0xffff);
 	engine_reset(par);
 
 	platform_set_drvdata(pdev, par);
