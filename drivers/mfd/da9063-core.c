@@ -390,11 +390,13 @@ int da9063_device_init(struct da9063 *da9063, unsigned int irq)
 			return ret;
 		}
 
-		/* We know that, e.g., the ZYNQ SLCR-based restart handler has priority
-		 * SYS_OFF_PRIO_HIGH (192). We want the PMIC (da9063) to have higher
-		 * priority than this because the PMIC provides a sys-off mechanism that
-		 * is closer to the hardware. Therefore, we use priority
-		 * SYS_OFF_PRIO_HIGH + 1 = 193.
+		/* Run after the ZYNQ SLCR-based restart handler (SYS_OFF_PRIO_HIGH,
+		 * 192), as a fallback only: SYS_OFF_PRIO_HIGH - 1 = 191. A restart
+		 * through the PMIC's POWER-DOWN mode sometimes never comes back. On
+		 * bb2045014 the PMIC either stayed off or the BootROM failed to read
+		 * the QSPI flash (error 0x2000), 12 of 261 restarts, while 120 SLCR
+		 * soft resets in the same loop all came back (sbt/drupe#48). An SLCR
+		 * restart leaves the PMIC's rails up.
 		 *
 		 * Note that the "da9063_wdt" device (the watchdog device) also registers
 		 * a restart handler (function "da9063_wdt_restart") with priority 128.
@@ -403,7 +405,7 @@ int da9063_device_init(struct da9063 *da9063, unsigned int irq)
 		 */
 		ret = devm_register_sys_off_handler(da9063->dev,
 		                                    SYS_OFF_MODE_RESTART,
-		                                    SYS_OFF_PRIO_HIGH + 1,
+		                                    SYS_OFF_PRIO_HIGH - 1,
 		                                    &da9063_restart_handler,
 											da9063);
 		if (ret) {
