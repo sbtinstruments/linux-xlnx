@@ -235,6 +235,32 @@ static int ad970x_enable(struct device *dev)
 	return 0;
 }
 
+/* Switch VDD off and leave it off, so that the DAC starts from power-off on
+ * the next boot.
+ *
+ * A restart through the Zynq SLCR leaves every PMIC rail up. On bb2220006 the
+ * DAC then failed its self-calibration after 6 of 99 SLCR restarts, against
+ * 0 of 101 restarts through the PMIC, which drops the rails. A rebind (SWRST
+ * and a new calibration) cleared it 0 of 5 times, a cold boot 5 of 5
+ * (sbt/drupe#48).
+ *
+ * VDD is the PMIC's LDO10 ("V10A", reg_adc_dac), which also feeds the ADC.
+ * It is always-on, so regulator_disable() never switches it off, and once
+ * forced off, regulator_enable() never switches it on again. Only the next
+ * boot does, when the PMIC driver registers it.
+ */
+static void ad970x_cut_vdd(struct device *dev, const char *why)
+{
+	struct ad970x *ad970x = dev_get_drvdata(dev);
+	int error = regulator_force_disable(ad970x->vdd);
+
+	if (error) {
+		dev_err(dev, "Failed to switch off VDD %s: %d\n", why, error);
+		return;
+	}
+	dev_info(dev, "Switched off VDD %s\n", why);
+}
+
 static int ad970x_calibrate(struct device *dev)
 {
 	struct ad970x *ad970x = dev_get_drvdata(dev);
@@ -545,6 +571,11 @@ static int ad970x_probe(struct device *dev, struct regmap *regmap)
 	error = ad970x_apply_state(dev, &state);
 	if (error) {
 		dev_err(dev, "Failed to apply state: %d\n", error);
+		/* No shutdown runs for a device without a driver, so cut VDD now.
+		 * Then a warm restart recovers the DAC as a cold boot does.
+		 */
+		pm_runtime_put_sync(dev);
+		ad970x_cut_vdd(dev, "so that a restart recovers the DAC");
 		goto out_pm_enable;
 	}
 
@@ -604,6 +635,11 @@ static int ad970x_spi_probe(struct spi_device *spi)
 	return ad970x_probe(&spi->dev, regmap);
 }
 
+static void ad970x_spi_shutdown(struct spi_device *spi)
+{
+	ad970x_cut_vdd(&spi->dev, "for a clean start on the next boot");
+}
+
 static int ad970x_pm_runtime_suspend(struct device *dev)
 {
 	int error = ad970x_disable(dev);
@@ -654,6 +690,7 @@ static const struct spi_device_id ad970x_id_table[] = {
 
 static struct spi_driver ad970x_driver = {
 	.probe = ad970x_spi_probe,
+	.shutdown = ad970x_spi_shutdown,
 	.driver = {
 		.name = "ad970x",
 		.of_match_table = of_match_ptr(of_ad970x_match),
